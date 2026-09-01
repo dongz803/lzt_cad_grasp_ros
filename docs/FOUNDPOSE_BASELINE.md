@@ -42,22 +42,72 @@ Toolkit 的流程，适合先回答“官方基线能否复现、接口是否正
 不下载 PBR 训练集，也不进行 FoundPose 专项训练。上述三个 T-LESS 压缩包约
 0.82 GB；检测结果另计。先运行标准测试子集，避免一开始下载全量测试与训练数据。
 
-推荐目录：
+当前实际目录：
 
 ```text
 /home/lzt/lzt_ros2_ws/datasets/bop/
 ├── tless/
 │   ├── camera_primesense.json
-│   ├── models/
+│   ├── models_cad/
 │   ├── models_eval/
+│   ├── models_reconst/
 │   └── test_primesense/
 └── detections/
     └── cnos-fastsam/
-        └── cnos-fastsam_tless_test.json
+        └── cnos-fastsam_tless-test.json
 ```
 
-数据不放进 Git 仓库。实际目录结构以 BOP 压缩包内容和 FoundPose 配置为准，解压后
-先用 BOP Toolkit 校验，再生成 T-LESS 专用的模板、对象表征和推理配置。
+数据不放进 Git 仓库。上述命名与 FoundPose 当前代码及 BOP 压缩包保持一致。
+
+## 已跑通的小样本
+
+2026-09-01 已在本机完成一个端到端 smoke test：T-LESS 对象 1、场景 20、图像 3。
+该样本使用 CNOS-FastSAM 默认实例掩膜和 DINOv2 ViT-S 特征。为快速验证安装，模板
+配置只采样 9 个视点和 4 个平面内旋转，共生成 36 个模板；PCA 使用 128 维，FAISS
+使用 256 个视觉词。这些参数只证明流程连通，不代表论文实验或 FoundPose 标准精度。
+
+隔离环境与数据位置：
+
+```text
+/home/lzt/lzt_ros2_ws/.envs/foundpose_gpu
+/home/lzt/lzt_ros2_ws/datasets/bop
+/home/lzt/lzt_ros2_ws/datasets/bop_smoke
+/home/lzt/lzt_ros2_ws/src/lzt_cad_grasp_ros/third_party/foundpose
+```
+
+可复现命令：
+
+```bash
+cd /home/lzt/lzt_ros2_ws/src/lzt_cad_grasp_ros
+
+/home/lzt/lzt_ros2_ws/.envs/foundpose_gpu/bin/python \
+  scripts/prepare_tless_smoke.py \
+  --source /home/lzt/lzt_ros2_ws/datasets/bop \
+  --destination /home/lzt/lzt_ros2_ws/datasets/bop_smoke
+
+export BOP_PATH=/home/lzt/lzt_ros2_ws/datasets/bop_smoke
+export BOP_OUTPUT_PATH=/home/lzt/lzt_ros2_ws/src/lzt_cad_grasp_ros/outputs/foundpose_smoke
+export PYOPENGL_PLATFORM=egl
+export FOUNDPOSE_PYTHON=/home/lzt/lzt_ros2_ws/.envs/foundpose_gpu/bin/python
+
+$FOUNDPOSE_PYTHON scripts/run_foundpose.py gen_templates \
+  --opts-path config/foundpose_smoke/tless_templates.json
+$FOUNDPOSE_PYTHON scripts/run_foundpose.py gen_repre \
+  --opts-path config/foundpose_smoke/tless_repre.json
+$FOUNDPOSE_PYTHON scripts/run_foundpose.py infer \
+  --opts-path config/foundpose_smoke/tless_infer.json
+```
+
+本次验证得到 195 组查询—模板特征对应，5 个模板候选均生成粗位姿，最终保存 1 个
+位姿。FoundPose 统计的算法时间约 0.433 秒（另含已提供的 CNOS 时间 0.284 秒），
+输出平移为 `[-107.215, 20.952, 774.354] mm`，MSSD 为 34.314 mm，MSPD 为
+32.732 px。由于这里只用了 36 个稀疏模板，数值不能替代完整 BOP 评测。
+
+输出文件位于：
+
+```text
+outputs/foundpose_smoke/inference/tless_smoke_v1/1/estimated-poses.json
+```
 
 ## ROBI 的定位
 

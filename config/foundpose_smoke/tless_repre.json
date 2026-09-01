@@ -1,0 +1,21 @@
+{
+  "gen_repre_opts": {
+    "version": "smoke_v1",
+    "templates_version": "smoke_v1",
+    "object_dataset": "tless",
+    "object_lids": [1],
+    "extractor_name": "dinov2_version=vits14-reg_stride=14_facet=token_layer=9_logbin=0_norm=1",
+    "grid_cell_size": 14.0,
+    "apply_pca": true,
+    "pca_components": 128,
+    "pca_whiten": false,
+    "pca_max_samples_for_fitting": 100000,
+    "cluster_features": true,
+    "cluster_num": 256,
+    "template_desc_opts": {
+      "desc_type": "tfidf"
+    },
+    "overwrite": true,
+    "debug": true
+  }
+}
