@@ -1,0 +1,44 @@
+method:
+  name: foundpose
+  role: coarse_object_pose_estimation
+  output_transform: camera_from_object
+  training_required: false
+  public_implementation_scope: coarse_pose_without_featuremetric_refinement
+
+runtime:
+  environment_name: foundpose_gpu
+  environment_isolated_from_ros: true
+  device: cuda
+  gpu_profile: rtx_3060_safe_default
+  backbone_family: dinov2_vit_s
+  inference_batch_size: 1
+  exchange_format: bop_json
+
+segmentation:
+  initial_source: cnos_fastsam_bop2023_default_detections
+  future_interface: replaceable_instance_mask_provider
+
+datasets:
+  bop_root_environment_variable: BOP_PATH
+  recommended_bop_root: /home/lzt/lzt_ros2_ws/datasets/bop
+  primary:
+    name: tless
+    format: bop
+    initial_downloads:
+      - base
+      - models
+      - test_bop19
+      - bop2023_default_task4_detections
+    pbr_training_images_required: false
+  secondary:
+    name: robi
+    format: native_then_bop_adapter
+    initial_objects:
+      - Chrome_Screw
+      - Gear
+
+integration:
+  foundpose_repository: https://github.com/facebookresearch/foundpose
+  expected_local_path: third_party/foundpose
+  object_pose_is_not_robot_grasp_pose: true
+  next_stage: cad_grasp_templates_and_pick_place_constraint_ranking

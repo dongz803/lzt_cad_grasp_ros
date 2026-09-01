@@ -3,6 +3,5 @@ cad_grasp_exploration_node:
     scene_name: exploration_workcell.xml
     object_config: objects/copper_baseline.yaml
     dataset_format: bop
-    pose_backend: unconfigured
+    pose_backend: foundpose
     publish_rate_hz: 1.0
-
