@@ -1,0 +1,29 @@
+schema_version: 1
+object_id: copper_baseline
+display_name: 铜柱基线验证件
+
+cad:
+  # 当前对象由 MuJoCo primitive 组成；换工业物料时填写独立 mesh。
+  mesh: null
+  units_to_m: 1.0
+  object_frame: body_origin
+
+symmetry:
+  type: continuous_axis
+  axis_xyz: [0.0, 0.0, 1.0]
+
+perception:
+  roi_source: mask
+  expected_modalities: [rgb, depth]
+
+gripper:
+  type: parallel_jaw
+  minimum_opening_m: 0.0
+  maximum_opening_m: 0.085
+
+task:
+  placement_position_tolerance_m: 0.009
+  placement_angle_tolerance_deg: 5.0
+  functional_surfaces: []
+  forbidden_grasp_surfaces: []
+

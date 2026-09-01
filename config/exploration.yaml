@@ -1,0 +1,8 @@
+cad_grasp_exploration_node:
+  ros__parameters:
+    scene_name: exploration_workcell.xml
+    object_config: objects/copper_baseline.yaml
+    dataset_format: bop
+    pose_backend: unconfigured
+    publish_rate_hz: 1.0
+

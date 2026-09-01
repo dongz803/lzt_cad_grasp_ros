@@ -1,0 +1,95 @@
+<mujoco model="tracer">
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+  <option integrator="implicitfast" cone="elliptic" impratio="10"/>
+
+  <default>
+    <default class="tracer">
+      <joint damping="1" armature="0.02"/>
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+      </default>
+      <default class="collision">
+        <geom group="3" rgba="0.2 0.2 0.2 0.15"/>
+      </default>
+    </default>
+  </default>
+
+  <asset>
+    <material name="tracer_body" rgba="0.23 0.27 0.30 1" metallic="0.15" roughness="0.45"/>
+    <material name="tracer_black" rgba="0.055 0.065 0.075 1" roughness="0.65"/>
+    <material name="mount_metal" rgba="0.48 0.50 0.52 1" metallic="0.35" roughness="0.4"/>
+    <mesh name="tracer_base_mesh" file="tracer_base.obj"/>
+    <mesh name="tracer_wheel_mesh" file="tracer_wheel.obj"/>
+    <mesh name="castor_joint_mesh" file="castor_joint.obj"/>
+    <mesh name="castor_mesh" file="castor.obj"/>
+    <mesh name="urbase_mesh" file="urbase_base_link.stl"/>
+    <mesh name="controller_mesh" file="controller.stl"/>
+    <mesh name="aluminium_mesh" file="aluminium.stl"/>
+  </asset>
+
+  <worldbody>
+    <!-- Root is fixed deliberately: the first milestone is stable vision and manipulation. -->
+    <body name="tracer_base" childclass="tracer">
+      <geom class="visual" mesh="tracer_base_mesh" material="tracer_body"/>
+      <geom name="tracer_chassis_collision" class="collision" type="box"
+            pos="0 0 0.043" size="0.32 0.255 0.065"/>
+
+      <body name="right_wheel" pos="0 -0.17 -0.082">
+        <joint name="right_wheel_joint" type="hinge" axis="0 1 0"/>
+        <!-- The converted wheel mesh is Z-axis aligned; rotate only its visual. -->
+        <geom class="visual" mesh="tracer_wheel_mesh" material="tracer_black"
+              euler="1.5708 0 0"/>
+        <geom class="collision" type="cylinder" size="0.0605 0.0422"
+              quat="0.707107 0.707107 0 0" density="350"/>
+      </body>
+      <body name="left_wheel" pos="0 0.17 -0.082" euler="3.141593 0 0">
+        <joint name="left_wheel_joint" type="hinge" axis="0 1 0"/>
+        <geom class="visual" mesh="tracer_wheel_mesh" material="tracer_black"
+              euler="1.5708 0 0"/>
+        <geom class="collision" type="cylinder" size="0.0605 0.0422"
+              quat="0.707107 0.707107 0 0" density="350"/>
+      </body>
+
+      <!-- The four small castors are visual for now; this avoids unnecessary contact jitter. -->
+      <body name="front_left_castor" pos="0.18955 0.17 -0.0380886" euler="-1.5708 0 0">
+        <geom class="visual" mesh="castor_joint_mesh" material="tracer_black"/>
+        <body name="front_left_castor_wheel" pos="-0.0218084 0.067 0">
+          <geom class="visual" mesh="castor_mesh" material="tracer_black"
+                euler="1.5708 0 0"/>
+        </body>
+      </body>
+      <body name="front_right_castor" pos="0.18955 -0.17 -0.0380886" euler="-1.5708 0 0">
+        <geom class="visual" mesh="castor_joint_mesh" material="tracer_black"/>
+        <body name="front_right_castor_wheel" pos="-0.0218084 0.067 0">
+          <geom class="visual" mesh="castor_mesh" material="tracer_black"
+                euler="1.5708 0 0"/>
+        </body>
+      </body>
+      <body name="rear_right_castor" pos="-0.18955 -0.17 -0.0380886" euler="-1.5708 0 0">
+        <geom class="visual" mesh="castor_joint_mesh" material="tracer_black"/>
+        <body name="rear_right_castor_wheel" pos="-0.0218084 0.067 0">
+          <geom class="visual" mesh="castor_mesh" material="tracer_black"
+                euler="1.5708 0 0"/>
+        </body>
+      </body>
+      <body name="rear_left_castor" pos="-0.18955 0.17 -0.0380886" euler="-1.5708 0 0">
+        <geom class="visual" mesh="castor_joint_mesh" material="tracer_black"/>
+        <body name="rear_left_castor_wheel" pos="-0.0218084 0.067 0">
+          <geom class="visual" mesh="castor_mesh" material="tracer_black"
+                euler="1.5708 0 0"/>
+        </body>
+      </body>
+
+      <!-- Hardware copied from ur5e_all.xacro. These meshes are visual-only. -->
+      <geom class="visual" mesh="urbase_mesh" material="mount_metal" pos="-0.03 0 0.218"/>
+      <geom class="visual" mesh="controller_mesh" material="tracer_black" pos="-0.235 0.017 0.218"/>
+      <geom class="visual" mesh="aluminium_mesh" material="mount_metal" pos="-0.142 0.115 0.016"/>
+      <geom class="visual" mesh="aluminium_mesh" material="mount_metal" pos="-0.142 -0.115 0.016"/>
+      <geom class="visual" mesh="aluminium_mesh" material="mount_metal" pos="0.145 0.115 0.016"/>
+      <geom class="visual" mesh="aluminium_mesh" material="mount_metal" pos="0.145 -0.115 0.016"/>
+
+      <site name="arm_mount" pos="-0.03 0 0.218" euler="0 0 -1.5708"
+            size="0.006" rgba="0.2 0.8 0.2 0.35" group="4"/>
+    </body>
+  </worldbody>
+</mujoco>

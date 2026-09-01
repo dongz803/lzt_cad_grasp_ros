@@ -1,0 +1,171 @@
+<mujoco model="lzt_mujoco_vision_ten_objects">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast"
+          cone="elliptic" impratio="10"/>
+
+  <visual>
+    <global offwidth="960" offheight="720"/>
+    <map znear="0.01" zfar="3.0"/>
+    <quality shadowsize="4096"/>
+  </visual>
+
+  <statistic center="-0.32 0 0.45" extent="1.2"/>
+
+  <default>
+    <geom friction="1.0 0.03 0.003" condim="4" solref="0.02 1"/>
+    <default class="copper_part">
+      <joint type="free" damping="0.002"/>
+      <geom material="copper_mat" density="8960"
+            friction="0.55 0.01 0.001"/>
+    </default>
+  </default>
+
+  <asset>
+    <texture name="floor_tex" type="2d" builtin="checker"
+             rgb1="0.20 0.22 0.24" rgb2="0.32 0.34 0.36"
+             width="512" height="512"/>
+    <material name="floor_mat" texture="floor_tex" texrepeat="4 4" reflectance="0.05"/>
+    <material name="platform_mat" rgba="0.26 0.30 0.34 1"
+              specular="0.15" shininess="0.2" reflectance="0.03"/>
+    <material name="copper_mat" rgba="0.72 0.31 0.12 1"
+              specular="0.85" shininess="0.85" reflectance="0.28"/>
+    <material name="camera_body_mat" rgba="0.10 0.11 0.12 1"
+              specular="0.25" shininess="0.35"/>
+    <material name="camera_lens_mat" rgba="0.03 0.06 0.08 1"
+              specular="0.75" shininess="0.9"/>
+  </asset>
+
+  <worldbody>
+    <light name="key_light" pos="-0.35 -0.30 0.85" dir="0.35 0.30 -0.85"
+           diffuse="0.90 0.86 0.80" specular="0.75 0.70 0.65" castshadow="true"/>
+    <light name="fill_light" pos="0.45 0.10 0.55" dir="-0.45 -0.10 -0.55"
+           diffuse="0.35 0.40 0.48" specular="0.20 0.22 0.25" castshadow="false"/>
+
+    <geom name="floor" type="plane" size="1.5 1.5 0.05" material="floor_mat"/>
+
+    <!-- Platform, illumination and camera are identical to vision_scene.xml. -->
+    <body name="platform" pos="-0.2 0.0 0.4">
+      <geom name="platform_geom" type="box" size="0.19 0.5 0.025"
+            material="platform_mat"/>
+    </body>
+
+    <!--
+      Ten copies of the current placeholder copper part. Their origins are
+      11 mm above the platform surface (9 mm radius + 2 mm drop gap). They are
+      distributed in two staggered columns with generous clearance and use ten
+      distinct in-plane yaw angles. There is no stacking or initial contact.
+
+      The first body keeps the legacy target/target_freejoint names so existing
+      single-target utilities can still address one designated object if needed.
+    -->
+    <body name="target" childclass="copper_part"
+          pos="-0.22 -0.38 0.436" quat="0.70710678 0.70710678 0 0">
+      <joint name="target_freejoint"/>
+      <geom name="target_middle" type="cylinder" pos="0 0 -0.0075"
+            size="0.0080 0.0075"/>
+      <geom name="target_knurl" type="cylinder" pos="0 0 -0.0200"
+            size="0.0090 0.0050"/>
+    </body>
+
+    <body name="target_02" childclass="copper_part"
+          pos="-0.09 -0.32 0.436"
+          quat="0.69636424 0.69636424 0.12278780 0.12278780">
+      <joint name="target_02_freejoint"/>
+      <geom name="target_02_middle" type="cylinder" pos="0 0 -0.0075"
+            size="0.0080 0.0075"/>
+      <geom name="target_02_knurl" type="cylinder" pos="0 0 -0.0200"
+            size="0.0090 0.0050"/>
+    </body>
+
+    <body name="target_03" childclass="copper_part"
+          pos="-0.30 -0.20 0.436"
+          quat="0.69034553 0.69034553 -0.15304592 -0.15304592">
+      <joint name="target_03_freejoint"/>
+      <geom name="target_03_middle" type="cylinder" pos="0 0 -0.0075"
+            size="0.0080 0.0075"/>
+      <geom name="target_03_knurl" type="cylinder" pos="0 0 -0.0200"
+            size="0.0090 0.0050"/>
+    </body>
+
+    <body name="target_04" childclass="copper_part"
+          pos="-0.10 -0.12 0.436"
+          quat="0.65328148 0.65328148 0.27059805 0.27059805">
+      <joint name="target_04_freejoint"/>
+      <geom name="target_04_middle" type="cylinder" pos="0 0 -0.0075"
+            size="0.0080 0.0075"/>
+      <geom name="target_04_knurl" type="cylinder" pos="0 0 -0.0200"
+            size="0.0090 0.0050"/>
+    </body>
+
+    <body name="target_05" childclass="copper_part"
+          pos="-0.31 -0.02 0.436"
+          quat="0.62721138 0.62721138 -0.32650558 -0.32650558">
+      <joint name="target_05_freejoint"/>
+      <geom name="target_05_middle" type="cylinder" pos="0 0 -0.0075"
+            size="0.0080 0.0075"/>
+      <geom name="target_05_knurl" type="cylinder" pos="0 0 -0.0200"
+            size="0.0090 0.0050"/>
+    </body>
+
+    <body name="target_06" childclass="copper_part"
+          pos="-0.09 0.07 0.436"
+          quat="0.57922797 0.57922797 0.40557979 0.40557979">
+      <joint name="target_06_freejoint"/>
+      <geom name="target_06_middle" type="cylinder" pos="0 0 -0.0075"
+            size="0.0080 0.0075"/>
+      <geom name="target_06_knurl" type="cylinder" pos="0 0 -0.0200"
+            size="0.0090 0.0050"/>
+    </body>
+
+    <body name="target_07" childclass="copper_part"
+          pos="-0.30 0.17 0.436"
+          quat="0.56098553 0.56098553 -0.43045933 -0.43045933">
+      <joint name="target_07_freejoint"/>
+      <geom name="target_07_middle" type="cylinder" pos="0 0 -0.0075"
+            size="0.0080 0.0075"/>
+      <geom name="target_07_knurl" type="cylinder" pos="0 0 -0.0200"
+            size="0.0090 0.0050"/>
+    </body>
+
+    <body name="target_08" childclass="copper_part"
+          pos="-0.10 0.25 0.436" quat="0.5 0.5 0.5 0.5">
+      <joint name="target_08_freejoint"/>
+      <geom name="target_08_middle" type="cylinder" pos="0 0 -0.0075"
+            size="0.0080 0.0075"/>
+      <geom name="target_08_knurl" type="cylinder" pos="0 0 -0.0200"
+            size="0.0090 0.0050"/>
+    </body>
+
+    <body name="target_09" childclass="copper_part"
+          pos="-0.31 0.36 0.436"
+          quat="0.43045933 0.43045933 -0.56098553 -0.56098553">
+      <joint name="target_09_freejoint"/>
+      <geom name="target_09_middle" type="cylinder" pos="0 0 -0.0075"
+            size="0.0080 0.0075"/>
+      <geom name="target_09_knurl" type="cylinder" pos="0 0 -0.0200"
+            size="0.0090 0.0050"/>
+    </body>
+
+    <body name="target_10" childclass="copper_part"
+          pos="-0.09 0.43 0.436"
+          quat="0.27059805 0.27059805 0.65328148 0.65328148">
+      <joint name="target_10_freejoint"/>
+      <geom name="target_10_middle" type="cylinder" pos="0 0 -0.0075"
+            size="0.0080 0.0075"/>
+      <geom name="target_10_knurl" type="cylinder" pos="0 0 -0.0200"
+            size="0.0090 0.0050"/>
+    </body>
+
+    <body name="vision_sensor" pos="0 -0.76926867 0.75834976"
+          xyaxes="1 0 0 0 0.39760744 0.91755563">
+      <geom name="vision_sensor_housing" type="box" size="0.045 0.012 0.015"
+            material="camera_body_mat" contype="0" conaffinity="0" group="2"/>
+      <geom name="vision_sensor_lens" type="cylinder" pos="0 0 -0.017"
+            size="0.008 0.003" material="camera_lens_mat"
+            contype="0" conaffinity="0" group="2"/>
+      <site name="vision_camera_frame" pos="0 0 -0.021" size="0.004"
+            rgba="0.15 0.65 1 0.5" group="4"/>
+      <camera name="vision_camera" pos="0 0 -0.021" fovy="44"/>
+    </body>
+  </worldbody>
+</mujoco>
