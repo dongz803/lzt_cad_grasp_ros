@@ -139,6 +139,10 @@ def main() -> None:
         },
     }
     manifest_path = output_root / "FROZEN_BASELINE.json"
+    if manifest_path.exists():
+        raise SystemExit(
+            f"refusing to overwrite immutable baseline manifest: {manifest_path}"
+        )
     manifest_path.write_text(
         json.dumps(manifest, indent=2) + "\n",
         encoding="utf-8",
