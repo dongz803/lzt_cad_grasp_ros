@@ -12,6 +12,7 @@
     "pca_max_samples_for_fitting": 100000,
     "cluster_features": true,
     "cluster_num": 2048,
+    "cluster_use_gpu": false,
     "template_desc_opts": {
       "desc_type": "tfidf"
     },
