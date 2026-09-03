@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -116,6 +117,19 @@ def main() -> None:
         encoding="utf-8",
     )
     print(f"manifest: {destination / 'SOURCE_SNAPSHOT.json'}")
+
+    patch_path = (
+        Path(__file__).resolve().parents[1]
+        / "third_party"
+        / "patches"
+        / "foundpose_topk_coarse.patch"
+    )
+    subprocess.run(
+        ["patch", "-p1", "--forward", "--input", str(patch_path)],
+        cwd=destination,
+        check=True,
+    )
+    print(f"applied compatibility patch: {patch_path.name}")
 
 
 if __name__ == "__main__":

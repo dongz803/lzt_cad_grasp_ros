@@ -1,0 +1,59 @@
+diff --git a/scripts/infer.py b/scripts/infer.py
+--- a/scripts/infer.py
++++ b/scripts/infer.py
+@@ -90,6 +90,7 @@ class InferOpts(NamedTuple):
+     pnp_refine_lm: bool = True
+ 
+     final_pose_type: str = "best_coarse"
++    final_pose_top_k: int = 5
+ 
+     # Other options.
+     save_estimates: bool = True
+@@ -106,7 +107,8 @@ def infer(opts: InferOpts) -> None:
+ 
+     # Prepare a logger and a timer.
+     logger = logging.get_logger(level=logging.INFO if opts.debug else logging.WARNING)
+-    timer = misc_util.Timer(enabled=opts.debug)
++    # Timing is part of the BOP result contract even when verbose logging is off.
++    timer = misc_util.Timer(enabled=True)
+     timer.start()
+ 
+     # Load pre-generated detections saved in the BOP format.
+@@ -608,24 +609,24 @@ def infer(opts: InferOpts) -> None:
+                 # Select the final pose estimate.
+                 final_poses = []
+                
+-                if opts.final_pose_type in [
+-                    "best_coarse",
+-                ]:
++                if opts.final_pose_type in ["best_coarse", "top_k_coarse"]:
+ 
+                     # If no successful coarse pose, continue.
+                     if len(coarse_poses) == 0:
+                         continue
+ 
+-                    # Select the refined pose corresponding to the best coarse pose as the final pose.
+-                    final_pose = None
+-
+-                    if opts.final_pose_type in [
+-                        "best_coarse",
+-                    ]:
+-                        final_pose = coarse_poses[best_coarse_pose_id]
+-
+-                    if final_pose is not None:
+-                        final_poses.append(final_pose)
++                    if opts.final_pose_type == "best_coarse":
++                        final_poses.append(coarse_poses[best_coarse_pose_id])
++                    else:
++                        if opts.final_pose_top_k <= 0:
++                            raise ValueError("final_pose_top_k must be positive")
++                        final_poses.extend(
++                            sorted(
++                                coarse_poses,
++                                key=lambda pose: pose["quality"],
++                                reverse=True,
++                            )[: opts.final_pose_top_k]
++                        )
+ 
+                 else:
+                     raise ValueError(f"Unknown final pose type {opts.final_pose_type}")

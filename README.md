@@ -13,15 +13,23 @@
 
 ## 当前状态
 
-当前已跑通 FoundPose + T-LESS 的第一阶段小样本基线，但尚未宣称实现论文方法：
+当前已跑通 FoundPose + T-LESS 小样本，并开始执行标准 BOP19 全量基线；尚未将
+阶段结果宣称为完整论文方法：
 
 - 已定义 RGB-D 观测、CAD 对象、位姿假设、抓取候选和取放任务的数据契约；
 - 已建立可替换的位姿估计器与任务抓取规划器接口；
 - 已复制原包的 MuJoCo 机器人资产和三个基线场景；
-- 已提供铜柱对象配置示例，但后续物料必须通过新配置接入；
+- 已实现物料 YAML 校验和 CAD 平行夹爪候选生成，真实 T-LESS CAD 已通过实跑；
 - FoundPose 已安装到隔离环境，并已在 RTX 3060 上完成 T-LESS 单图粗 6D 位姿推理；
-- T-LESS 用于第一阶段标准复现，ROBI 用于第二阶段反光工业件验证；
-- 工业数据集适配器、CAD 抓取生成和最终评分方法仍待实现。
+- 已扩展真实 Top-5 PnP 粗位姿，并输出对称归一化的加权 SE(3) 协方差；
+- 已将 Top-K SE(3) 协方差按抓取点力臂传播到取料和放料容差，联合 Top-K
+  置信度、IK/碰撞回调、解析抓取质量和运动距离输出鲁棒排序；
+- T-LESS BOP19 的 30 个 CAD、20 个场景、1000 张目标图像和 6423 个目标实例已校验完整；
+- 标准对象 1 已完成 798 模板、对象表示、完整目标推理和官方 VSD/MSSD/MSPD 流程；
+- T-LESS 用于第一阶段标准复现；ROBI→BOP 转换、RealSense 深度到 RGB
+  重投影、GT 掩膜生成和 FoundPose 数据集注册已实现，Chrome Screw 的5张真实
+  RealSense图像、190个反光实例已完成端到端6D位姿验证；
+- 其余对象仍在可恢复批处理中，最终基线尚未冻结。
 
 ## 目录
 
@@ -92,6 +100,52 @@ MSPD；`20_3_1_0_0.jpg` 展示输入掩膜、候选模板、特征对应以及�
 当前暂不移动、重命名或删除上述目录。后续若确认需要简化，可在不改变 FoundPose
 内部结构的前提下增加“最新 JSON/图片”的快捷入口。
 
+## 标准 BOP19 与抓取接口
+
+完整 T-LESS 运行采用官方 FoundPose 密度：57 个视点、14 个平面内旋转，即每个
+CAD 798 张模板。每个对象独立保存配置、输出和资源 profile，已完成对象会自动跳过：
+
+```bash
+cd /home/lzt/lzt_ros2_ws/src/lzt_cad_grasp_ros
+export BOP_PATH=/home/lzt/lzt_ros2_ws/datasets/bop
+PY=/home/lzt/lzt_ros2_ws/.envs/foundpose_gpu/bin/python
+
+python3 scripts/validate_tless_bop19.py
+$PY scripts/run_bop19_stage.py gen_templates --workers 2
+$PY scripts/run_bop19_stage.py gen_repre --workers 1
+$PY scripts/run_bop19_stage.py infer --workers 2
+
+python3 scripts/export_foundpose_bop.py \
+  --output outputs/foundpose_bop19/bop_results/foundpose-bop19-standard_tless-test.csv
+$PY scripts/evaluate_bop19_official.py \
+  --result-csv outputs/foundpose_bop19/bop_results/foundpose-bop19-standard_tless-test.csv
+```
+
+`gen_repre` 在 6 GiB GPU 上被强制为单进程；模板虽允许最多三路，但 RTX 3060
+实测采用两路更稳妥，推理最多两路。显存
+profile 测量的是整张 GPU 的总占用，并同时记录运行前基线、峰值和峰值增量。
+
+将 FoundPose 结果转换为项目 Top-K 接口，以及从 CAD 生成物体坐标系抓取候选：
+
+```bash
+export BOP_PATH=/home/lzt/lzt_ros2_ws/datasets/bop
+python3 scripts/convert_foundpose_topk.py \
+  --input outputs/foundpose_smoke/inference/tless_smoke_v1/1/estimated-poses.json \
+  --object-config config/objects/tless_000001.yaml \
+  --output outputs/foundpose_smoke/inference/tless_smoke_v1/1/pose-hypotheses-top5.json
+python3 scripts/generate_cad_grasps.py \
+  --object-config config/objects/tless_000001.yaml \
+  --output outputs/cad_grasps/tless_000001.json
+python3 scripts/rank_task_grasps.py \
+  --pose-hypotheses outputs/foundpose_smoke/inference/tless_smoke_v1/1/pose-hypotheses-top5.json \
+  --grasp-candidates outputs/cad_grasps/tless_000001.json \
+  --object-config config/objects/tless_000001.yaml \
+  --output outputs/task_grasps/tless_000001_scene20_image3.json
+```
+
+正式 BOP 基线使用上游一致的 `best_coarse`；Top-K 研究接口使用独立配置
+`config/foundpose_bop19/tless_infer_topk.json`，避免多个同实例假设改变官方基线排名。
+
 ## 场景对应关系
 
 - `scenes/baseline_vision_single.xml`：原单铜柱 RGB-D 场景；
@@ -116,12 +170,9 @@ ros2 run lzt_cad_grasp_ros cad_grasp_exploration_node
 
 ## 后续实现顺序
 
-1. 将小样本配置扩展为 T-LESS BOP19 标准密度模板和完整测试子集；
-2. 记录完整 BOP 指标、运行时间和显存，并冻结 FoundPose 基线；
-3. 将输出统一为 Top-K 对称位姿假设和不确定度接口；
-4. 实现 CAD 抓取候选生成与物料配置校验；
-5. 将位姿假设传播到取料—放料联合鲁棒评分；
-6. 增加 ROBI→BOP 适配器并做反光工业件验证；
-7. 在训练未见工业 CAD 和 MuJoCo 完整上下料中做消融实验。
+1. 完成余下 T-LESS 标准模板、表示和完整测试推理；
+2. 生成全量官方 BOP 指标并写入不可变基线清单；
+3. 扩展 ROBI 的标准密度模板和真实实例分割对照实验；
+4. 在训练未见工业 CAD 和 MuJoCo 完整上下料中做消融实验。
 
 具体选择与操作边界见 `docs/FOUNDPOSE_BASELINE.md`。

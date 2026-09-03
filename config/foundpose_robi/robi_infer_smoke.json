@@ -1,0 +1,33 @@
+{
+  "infer_opts": {
+    "version": "robi_smoke_v1",
+    "repre_version": "robi_smoke_v1",
+    "object_dataset": "robi",
+    "object_lids": [2],
+    "crop": true,
+    "crop_rel_pad": 0.2,
+    "crop_size": [420, 420],
+    "use_detections": true,
+    "num_preds_factor": 1.0,
+    "min_visibility": 0.1,
+    "extractor_name": "dinov2_version=vits14-reg_stride=14_facet=token_layer=9_logbin=0_norm=1",
+    "grid_cell_size": 14.0,
+    "max_num_queries": 1000000,
+    "match_template_type": "tfidf",
+    "match_top_n_templates": 5,
+    "match_feat_matching_type": "cyclic_buddies",
+    "match_top_k_buddies": 300,
+    "pnp_type": "opencv",
+    "pnp_ransac_iter": 400,
+    "pnp_required_ransac_conf": 0.99,
+    "pnp_inlier_thresh": 10.0,
+    "pnp_refine_lm": true,
+    "final_pose_type": "best_coarse",
+    "save_estimates": true,
+    "vis_results": false,
+    "vis_corresp_top_n": 100,
+    "vis_feat_map": false,
+    "vis_for_paper": false,
+    "debug": false
+  }
+}

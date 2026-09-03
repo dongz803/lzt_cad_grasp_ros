@@ -3,22 +3,62 @@
 from .contracts import (
     CADObject,
     CameraObservation,
+    ContinuousSymmetry,
     GraspCandidate,
     PickPlaceTask,
     PoseEstimator,
     PoseHypothesis,
+    PoseHypothesisSet,
     TaskGraspPlanner,
 )
-from .simulation import build_workcell_model, build_workcell_spec
+from .object_config import ObjectConfig, load_object_config
+from .pose_hypotheses import foundpose_records_to_top_k, load_foundpose_top_k
+from .cad_grasp import MeshGeometry, generate_parallel_jaw_candidates
+from .task_grasp import (
+    MotionConstraintResult,
+    RankedTaskGrasp,
+    RobustScoringConfig,
+    rank_task_grasps,
+)
+from .robi_bop import ROBI_OBJECT_IDS, convert_robi_realsense_to_bop
+
+
+def build_workcell_model(*args, **kwargs):
+    """Import MuJoCo only for callers that actually build the workcell."""
+    from .simulation import build_workcell_model as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def build_workcell_spec(*args, **kwargs):
+    """Import MuJoCo only for callers that actually build the workcell spec."""
+    from .simulation import build_workcell_spec as implementation
+
+    return implementation(*args, **kwargs)
+
 
 __all__ = [
     "CADObject",
     "CameraObservation",
+    "ContinuousSymmetry",
     "GraspCandidate",
     "PickPlaceTask",
     "PoseEstimator",
     "PoseHypothesis",
+    "PoseHypothesisSet",
     "TaskGraspPlanner",
+    "ObjectConfig",
+    "load_object_config",
+    "foundpose_records_to_top_k",
+    "load_foundpose_top_k",
+    "MeshGeometry",
+    "generate_parallel_jaw_candidates",
+    "MotionConstraintResult",
+    "RankedTaskGrasp",
+    "RobustScoringConfig",
+    "rank_task_grasps",
+    "ROBI_OBJECT_IDS",
+    "convert_robi_realsense_to_bop",
     "build_workcell_model",
     "build_workcell_spec",
 ]

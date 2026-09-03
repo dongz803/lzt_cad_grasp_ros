@@ -98,16 +98,35 @@ $FOUNDPOSE_PYTHON scripts/run_foundpose.py infer \
   --opts-path config/foundpose_smoke/tless_infer.json
 ```
 
-本次验证得到 195 组查询—模板特征对应，5 个模板候选均生成粗位姿，最终保存 1 个
-位姿。FoundPose 统计的算法时间约 0.433 秒（另含已提供的 CNOS 时间 0.284 秒），
-输出平移为 `[-107.215, 20.952, 774.354] mm`，MSSD 为 34.314 mm，MSPD 为
-32.732 px。由于这里只用了 36 个稀疏模板，数值不能替代完整 BOP 评测。
+首次连通性验证得到 195 组查询—模板特征对应并保存最佳 1 个粗位姿；随后扩展为
+真实 Top-5 PnP 粗位姿，5 个候选不再由对称等价旋转伪造。Top-5 单图任务的墙钟
+时间为 7.81 秒、增量峰值显存 828 MiB（包含初始化）。最佳候选 MSSD 为
+34.314 mm、MSPD 为 32.732 px。由于这里只用了 36 个稀疏模板，数值不能替代完整
+BOP 评测。
 
 输出文件位于：
 
 ```text
 outputs/foundpose_smoke/inference/tless_smoke_v1/1/estimated-poses.json
+outputs/foundpose_smoke/inference/tless_smoke_v1/1/pose-hypotheses-top5.json
 ```
+
+## 标准 BOP19 状态
+
+标准配置位于 `config/foundpose_bop19/`。正式基线保持 FoundPose 上游的
+`best_coarse`，Top-K 使用单独的 `tless_infer_topk.json`，避免研究接口改变官方
+基线的提交排名。全量数据检查结果为 30 个 CAD、20 个场景、1000 张目标图像、
+4904 条目标项和 6423 个目标实例，缺失文件为 0。
+
+对象 1 已完成标准密度验通：798 张模板耗时 1337.34 秒，模板阶段峰值显存
+2832 MiB；对象表示耗时 27.71 秒、峰值显存 4945 MiB；完整对象 1 目标推理得到
+295 个有效输出，墙钟 167.02 秒、峰值显存 3500 MiB。官方 BOP19 评价已成功产生
+VSD、MSSD、MSPD 和总 AR。当前只有对象 1 的评价分数会把其余 29 类按缺失预测
+计零，仅用于工具链验收，不能引用为最终论文基线。
+
+批处理入口 `scripts/run_bop19_stage.py` 按对象保存配置和 profile，重跑时自动跳过
+完整对象。最终只有在 30 个对象的三个阶段、官方五项 score 字段和结果 CSV 均
+齐全时，`scripts/freeze_foundpose_baseline.py` 才允许生成 `FROZEN_BASELINE.json`。
 
 ## ROBI 的定位
 
@@ -149,13 +168,14 @@ featuremetric refinement，因此实验中要明确称为“FoundPose 开源粗�
 
 ## 下一步验收顺序
 
-1. 下载并记录 FoundPose 源码提交号，创建 `foundpose_gpu` 环境；
-2. 下载 T-LESS 最小集合与 CNOS 默认掩膜，并通过目录完整性检查；
-3. 在少量 T-LESS 图像上跑通模板生成、对象表征和推理；
-4. 运行完整 BOP19 test subset，记录 BOP AR、单帧耗时和显存峰值；
-5. 将 BOP 输出转换为本包的 `PoseHypothesis`，保留置信度和对称等价候选；
-6. 接入 CAD 抓取模板，开始取料—放料约束下的抓取创新实验；
-7. 编写 ROBI→BOP 适配器，用 Chrome Screw 和 Gear 做跨数据集验证。
+1. [x] 下载并记录 FoundPose 源码，创建 `foundpose_gpu` 环境；
+2. [x] 下载 T-LESS 与 CNOS 默认掩膜，并通过完整性检查；
+3. [x] 跑通小样本及对象 1 的标准模板、对象表示和完整目标推理；
+4. [ ] 完成余下 29 个对象，记录全量 BOP AR、耗时和显存并冻结基线；
+5. [x] 输出真实 Top-K PnP 候选、对称类别和 SE(3) 不确定度；
+6. [x] 实现 CAD 配置校验和解析式平行夹爪候选生成；
+7. [ ] 将不确定度接入取料—放料约束联合评分；
+8. [ ] 编写 ROBI→BOP 适配器，用 Chrome Screw 和 Gear 做跨数据集验证。
 
 ## 官方来源与许可
 

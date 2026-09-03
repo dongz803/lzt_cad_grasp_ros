@@ -28,7 +28,7 @@ setup(
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     data_files=project_data_files(),
-    install_requires=["setuptools"],
+    install_requires=["setuptools", "numpy", "PyYAML"],
     tests_require=["pytest"],
     zip_safe=False,
     maintainer="lzt",

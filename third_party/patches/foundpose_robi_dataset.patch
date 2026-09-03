@@ -1,0 +1,49 @@
+diff --git a/external/bop_toolkit/bop_toolkit_lib/dataset_params.py b/external/bop_toolkit/bop_toolkit_lib/dataset_params.py
+--- a/external/bop_toolkit/bop_toolkit_lib/dataset_params.py
++++ b/external/bop_toolkit/bop_toolkit_lib/dataset_params.py
+@@ -90,3 +90,4 @@ def get_model_params(datasets_path, dataset_name, model_type=None):
+         "hot3d": list(range(1, 34)),
+         "handal": list(range(1, 41)),
++        "robi": list(range(1, 8)),
+     }[dataset_name]
+@@ -111,3 +112,4 @@ def get_model_params(datasets_path, dataset_name, model_type=None):
+         "hot3d": [1, 2, 3, 5, 22, 24, 25, 29, 30, 32],
+         "handal": [26, 35, 36, 37, 38, 39, 40],
++        "robi": [3],
+     }[dataset_name]
+@@ -437,5 +439,35 @@ def get_split_params(datasets_path, dataset_name, split, split_type=None):
+ 
+         supported_error_types = ["ad", "add", "adi", "mssd", "mspd"]
+ 
++    # Reflective Objects in BIns (ROBI), converted locally to classic BOP.
++    elif dataset_name == "robi":
++        p["scene_ids"] = sorted(
++            int(os.path.basename(path))
++            for path in glob.glob(join(p["base_path"], split, "[0-9]*"))
++            if os.path.isdir(path) and os.path.basename(path).isdigit()
++        )
++        p["im_size"] = (1280, 720)
++        object_depths = []
++        for scene_id in p["scene_ids"]:
++            gt_path = join(
++                p["base_path"], split, "{:06d}".format(scene_id), "scene_gt.json"
++            )
++            if os.path.isfile(gt_path):
++                for instances in inout.load_scene_gt(gt_path).values():
++                    object_depths.extend(
++                        float(instance["cam_t_m2c"][2]) for instance in instances
++                    )
++        if object_depths:
++            min_depth, max_depth = min(object_depths), max(object_depths)
++            padding = max(25.0, 0.1 * (max_depth - min_depth))
++            p["depth_range"] = (
++                max(1.0, min_depth - padding),
++                max_depth + padding,
++            )
++        else:
++            p["depth_range"] = (250.0, 750.0)
++        p["azimuth_range"] = None
++        p["elev_range"] = None
++
+     else:
+         raise ValueError("Unknown BOP dataset ({}).".format(dataset_name))

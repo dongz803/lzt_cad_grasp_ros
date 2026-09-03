@@ -6,6 +6,8 @@ outputs/
 datasets/
 checkpoints/
 /third_party/foundpose/
+/third_party/bop_toolkit_full/
+/third_party/bop_toolkit_eval/
 *.egg-info/
 build/
 install/

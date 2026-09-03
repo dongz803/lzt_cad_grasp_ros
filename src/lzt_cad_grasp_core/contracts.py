@@ -17,7 +17,33 @@ def _transform(value: np.ndarray, field_name: str) -> np.ndarray:
         raise ValueError(f"{field_name} must contain finite values")
     if not np.allclose(transform[3], [0.0, 0.0, 0.0, 1.0]):
         raise ValueError(f"{field_name} must be homogeneous")
+    rotation = transform[:3, :3]
+    if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6):
+        raise ValueError(f"{field_name} rotation must be orthonormal")
+    if not np.isclose(np.linalg.det(rotation), 1.0, atol=1e-6):
+        raise ValueError(f"{field_name} rotation must have determinant +1")
     return transform.copy()
+
+
+@dataclass(frozen=True)
+class ContinuousSymmetry:
+    """A continuous rotational symmetry expressed in the CAD object frame."""
+
+    axis_xyz: np.ndarray
+    offset_m: np.ndarray
+
+    def __post_init__(self) -> None:
+        axis = np.asarray(self.axis_xyz, dtype=np.float64)
+        offset = np.asarray(self.offset_m, dtype=np.float64)
+        if axis.shape != (3,) or not np.all(np.isfinite(axis)):
+            raise ValueError("axis_xyz must contain three finite values")
+        norm = np.linalg.norm(axis)
+        if norm <= 1e-12:
+            raise ValueError("axis_xyz must not be zero")
+        if offset.shape != (3,) or not np.all(np.isfinite(offset)):
+            raise ValueError("offset_m must contain three finite values")
+        object.__setattr__(self, "axis_xyz", axis / norm)
+        object.__setattr__(self, "offset_m", offset.copy())
 
 
 @dataclass(frozen=True)
@@ -51,6 +77,7 @@ class CADObject:
     mesh_path: Path
     units_to_m: float = 1.0
     symmetry_transforms: tuple[np.ndarray, ...] = ()
+    continuous_symmetries: tuple[ContinuousSymmetry, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.object_id:
@@ -69,6 +96,8 @@ class PoseHypothesis:
     confidence: float
     symmetry_class: str = "identity"
     covariance_se3: np.ndarray | None = None
+    source: str = "unknown"
+    hypothesis_id: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -78,10 +107,57 @@ class PoseHypothesis:
         )
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must lie in [0, 1]")
+        if self.hypothesis_id < 0:
+            raise ValueError("hypothesis_id must be non-negative")
         if self.covariance_se3 is not None:
             covariance = np.asarray(self.covariance_se3, dtype=np.float64)
             if covariance.shape != (6, 6):
                 raise ValueError("covariance_se3 must have shape (6, 6)")
+            if not np.all(np.isfinite(covariance)):
+                raise ValueError("covariance_se3 must contain finite values")
+            if not np.allclose(covariance, covariance.T, atol=1e-10):
+                raise ValueError("covariance_se3 must be symmetric")
+            if np.min(np.linalg.eigvalsh(covariance)) < -1e-10:
+                raise ValueError("covariance_se3 must be positive semidefinite")
+            object.__setattr__(self, "covariance_se3", covariance.copy())
+
+
+@dataclass(frozen=True)
+class PoseHypothesisSet:
+    """Confidence-ordered Top-K hypotheses for one observed object instance."""
+
+    object_id: str
+    scene_id: int
+    image_id: int
+    instance_id: int
+    hypotheses: tuple[PoseHypothesis, ...]
+    covariance_se3: np.ndarray | None = None
+    uncertainty_method: str = "unavailable"
+    symmetry_discretization_deg: float | None = None
+
+    def __post_init__(self) -> None:
+        if not self.object_id:
+            raise ValueError("object_id must not be empty")
+        if self.scene_id < 0 or self.image_id < 0 or self.instance_id < 0:
+            raise ValueError("scene, image and instance IDs must be non-negative")
+        if len(self.hypotheses) == 0:
+            raise ValueError("hypotheses must not be empty")
+        if (
+            self.symmetry_discretization_deg is not None
+            and self.symmetry_discretization_deg <= 0.0
+        ):
+            raise ValueError("symmetry_discretization_deg must be positive")
+        confidences = [item.confidence for item in self.hypotheses]
+        if any(a < b for a, b in zip(confidences, confidences[1:])):
+            raise ValueError("hypotheses must be ordered by decreasing confidence")
+        if self.covariance_se3 is not None:
+            covariance = np.asarray(self.covariance_se3, dtype=np.float64)
+            if covariance.shape != (6, 6):
+                raise ValueError("covariance_se3 must have shape (6, 6)")
+            if not np.allclose(covariance, covariance.T, atol=1e-10):
+                raise ValueError("covariance_se3 must be symmetric")
+            if np.min(np.linalg.eigvalsh(covariance)) < -1e-10:
+                raise ValueError("covariance_se3 must be positive semidefinite")
             object.__setattr__(self, "covariance_se3", covariance.copy())
 
 
@@ -93,6 +169,8 @@ class GraspCandidate:
     transform_object_grasp: np.ndarray
     jaw_opening_m: float
     analytic_quality: float = 0.0
+    approach_distance_m: float = 0.08
+    antipodal_score: float = 0.0
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -102,6 +180,12 @@ class GraspCandidate:
         )
         if self.jaw_opening_m <= 0.0:
             raise ValueError("jaw_opening_m must be positive")
+        if not 0.0 <= self.analytic_quality <= 1.0:
+            raise ValueError("analytic_quality must lie in [0, 1]")
+        if self.approach_distance_m <= 0.0:
+            raise ValueError("approach_distance_m must be positive")
+        if not 0.0 <= self.antipodal_score <= 1.0:
+            raise ValueError("antipodal_score must lie in [0, 1]")
 
 
 @dataclass(frozen=True)
