@@ -171,6 +171,12 @@ class GraspCandidate:
     analytic_quality: float = 0.0
     approach_distance_m: float = 0.08
     antipodal_score: float = 0.0
+    contact_points_object_m: np.ndarray | None = None
+    contact_normals_object: np.ndarray | None = None
+    center_of_mass_offset_m: float = 0.0
+    minimum_edge_distance_m: float = 0.0
+    opening_margin_m: float = 0.0
+    finger_collision_free: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -186,6 +192,27 @@ class GraspCandidate:
             raise ValueError("approach_distance_m must be positive")
         if not 0.0 <= self.antipodal_score <= 1.0:
             raise ValueError("antipodal_score must lie in [0, 1]")
+        for field_name in ("center_of_mass_offset_m", "minimum_edge_distance_m"):
+            value = float(getattr(self, field_name))
+            if value < 0.0 or not np.isfinite(value):
+                raise ValueError(f"{field_name} must be finite and non-negative")
+        if not np.isfinite(self.opening_margin_m):
+            raise ValueError("opening_margin_m must be finite")
+        if self.contact_points_object_m is not None:
+            points = np.asarray(self.contact_points_object_m, dtype=np.float64)
+            if points.shape != (2, 3) or not np.all(np.isfinite(points)):
+                raise ValueError("contact_points_object_m must have shape (2, 3)")
+            object.__setattr__(self, "contact_points_object_m", points.copy())
+        if self.contact_normals_object is not None:
+            normals = np.asarray(self.contact_normals_object, dtype=np.float64)
+            if normals.shape != (2, 3) or not np.all(np.isfinite(normals)):
+                raise ValueError("contact_normals_object must have shape (2, 3)")
+            lengths = np.linalg.norm(normals, axis=1)
+            if np.any(lengths < 1e-8):
+                raise ValueError("contact_normals_object must be non-zero")
+            object.__setattr__(
+                self, "contact_normals_object", normals / lengths[:, None]
+            )
 
 
 @dataclass(frozen=True)

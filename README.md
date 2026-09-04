@@ -19,7 +19,8 @@
 - 已定义 RGB-D 观测、CAD 对象、位姿假设、抓取候选和取放任务的数据契约；
 - 已建立可替换的位姿估计器与任务抓取规划器接口；
 - 已复制原包的 MuJoCo 机器人资产和三个基线场景；
-- 已实现物料 YAML 校验和 CAD 平行夹爪候选生成，真实 T-LESS CAD 已通过实跑；
+- 已实现物料 YAML 校验和 CAD 平行夹爪候选生成；生成器显式检查两侧接触法向、
+  夹爪开度、均匀密度质心偏差、接触边缘距离和 Robotiq 2F-85 手指—CAD 碰撞；
 - FoundPose 已安装到隔离环境，并已在 RTX 3060 上完成 T-LESS 粗 6D 位姿推理；
 - 已扩展真实 Top-5 PnP 粗位姿，并输出对称归一化的加权 SE(3) 协方差；对象
   2–4 已完成完整测试，共形成 777 组、3885 个真实候选；
@@ -125,8 +126,9 @@ outputs/foundpose_bop19_topk/inference/tless_bop19_standard_topk_v1/<对象号>/
 outputs/foundpose_bop19_topk/inference/tless_bop19_standard_topk_v1/<对象号>/pose-hypotheses-top5.json
 ```
 
-前者是 FoundPose 原始 PnP 候选，后者按置信度排序、将平移统一为米，并根据 CAD
-连续对称性归一化后附加 6×6 SE(3) 协方差。对象 2/3/4 分别包含 203/304/270
+前者是 FoundPose 原始 PnP 候选，后者按置信度排序、将平移统一为米，显式保存
+原始 `confidence` 和组内归一化 `weight`，并根据 CAD 连续对称性归一化后附加
+6×6 SE(3) 协方差。对象 2/3/4 分别包含 203/304/270
 个实例，每个实例均有 5 个不同候选。原始 Top-K 中已观察到负深度和极端平移
 离群解，因此这些候选目前用于异常值分析和鲁棒抓取研究，不能未经门控直接执行。
 
@@ -185,6 +187,18 @@ PYOPENGL_PLATFORM=egl $PY scripts/run_bop19_stage.py infer \
   --object-start 2 --object-end 4 --workers 1
 ```
 
+对象 2–4 的 CAD 抓取候选和 Top-K 联合排序结果分别位于：
+
+```text
+outputs/cad_grasps/tless_00000<对象号>.json
+outputs/task_grasps/tless_00000<对象号>_topk_set0.json
+```
+
+自动生成器围绕 CAD 均匀密度质心采样 60 个 PCA 抓取框架，使用真实三角面和
+2F-85 指垫碰撞盒过滤，再按对向接触 0.40、开度余量 0.15、质心 0.25、边缘
+距离 0.20 的解析权重排序。对象 2/3/4 最终分别保留 12/4/12 个候选；数量不足时
+不会用碰撞候选补足。该权重是可解释的工程基线，后续仍需通过消融确定论文配置。
+
 ## 场景对应关系
 
 - `scenes/baseline_vision_single.xml`：原单铜柱 RGB-D 场景；
@@ -211,7 +225,7 @@ ros2 run lzt_cad_grasp_ros cad_grasp_exploration_node
 
 1. 对真实 Top-K 增加正深度、工作空间、几何一致性和不确定度异常门控；
 2. 将通过审计的 Top-K 扩展到对象 5–10，并形成 Best-1/Top-K 对照；
-3. 完善 CAD 抓取候选并接入 MuJoCo 预测位姿上下料闭环；
+3. 将已通过 CAD 几何过滤的候选接入 MuJoCo 预测位姿上下料闭环；
 4. 扩展 ROBI 与多工业 CAD 实验，再决定何时恢复对象 20–30 的标准模板任务。
 
 具体选择与操作边界见 `docs/FOUNDPOSE_BASELINE.md`。

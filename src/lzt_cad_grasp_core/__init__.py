@@ -13,7 +13,12 @@ from .contracts import (
 )
 from .object_config import ObjectConfig, load_object_config
 from .pose_hypotheses import foundpose_records_to_top_k, load_foundpose_top_k
-from .cad_grasp import MeshGeometry, generate_parallel_jaw_candidates
+from .cad_grasp import (
+    GraspGenerationDiagnostics,
+    MeshGeometry,
+    generate_parallel_jaw_candidates,
+    generate_parallel_jaw_candidates_with_diagnostics,
+)
 from .task_grasp import (
     MotionConstraintResult,
     RankedTaskGrasp,
@@ -52,7 +57,9 @@ __all__ = [
     "foundpose_records_to_top_k",
     "load_foundpose_top_k",
     "MeshGeometry",
+    "GraspGenerationDiagnostics",
     "generate_parallel_jaw_candidates",
+    "generate_parallel_jaw_candidates_with_diagnostics",
     "MotionConstraintResult",
     "RankedTaskGrasp",
     "RobustScoringConfig",

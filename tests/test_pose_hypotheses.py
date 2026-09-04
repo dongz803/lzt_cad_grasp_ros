@@ -55,7 +55,9 @@ def test_foundpose_record_becomes_symmetry_aware_top_k() -> None:
     assert sets[0].covariance_se3 is not None
     assert sets[0].covariance_se3.shape == (6, 6)
     assert sets[0].symmetry_discretization_deg == 1.0
-    assert hypothesis_sets_to_jsonable(sets)[0]["hypotheses"][0]["confidence"] == 0.75
+    jsonable = hypothesis_sets_to_jsonable(sets)[0]["hypotheses"]
+    assert jsonable[0]["confidence"] == 0.75
+    assert np.isclose(sum(item["weight"] for item in jsonable), 1.0)
 
 
 def test_single_pose_is_not_fabricated_into_statistical_top_k() -> None:
@@ -103,3 +105,27 @@ def test_two_pose_hypotheses_capture_translation_uncertainty() -> None:
 
     assert result.covariance_se3 is not None
     assert np.isclose(result.covariance_se3[0, 0], 0.000025)
+
+
+def test_json_weights_are_normalized_from_raw_confidence() -> None:
+    cad = CADObject(object_id="part", mesh_path=Path("part.ply"))
+    records = []
+    for hypothesis_id, confidence in enumerate((0.6, 0.3, 0.1)):
+        records.append(
+            {
+                "scene_id": 1,
+                "img_id": 2,
+                "inst_id": 0,
+                "hypothesis_id": hypothesis_id,
+                "score": confidence,
+                "R": np.eye(3).tolist(),
+                "t": [[float(hypothesis_id)], [0.0], [500.0]],
+            }
+        )
+
+    result = foundpose_records_to_top_k(records, cad, top_k=3)
+    hypotheses = hypothesis_sets_to_jsonable(result)[0]["hypotheses"]
+
+    np.testing.assert_allclose(
+        [item["weight"] for item in hypotheses], [0.6, 0.3, 0.1]
+    )

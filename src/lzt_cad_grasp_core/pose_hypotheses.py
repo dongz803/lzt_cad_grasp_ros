@@ -294,6 +294,13 @@ def hypothesis_sets_to_jsonable(
 ) -> list[dict[str, Any]]:
     payload = []
     for item in hypothesis_sets:
+        confidences = np.asarray(
+            [hypothesis.confidence for hypothesis in item.hypotheses],
+            dtype=np.float64,
+        )
+        if float(np.sum(confidences)) <= 1e-12:
+            confidences = np.ones_like(confidences)
+        weights = confidences / np.sum(confidences)
         payload.append(
             {
                 "object_id": item.object_id,
@@ -309,13 +316,14 @@ def hypothesis_sets_to_jsonable(
                     {
                         "hypothesis_id": hypothesis.hypothesis_id,
                         "confidence": hypothesis.confidence,
+                        "weight": float(weight),
                         "symmetry_class": hypothesis.symmetry_class,
                         "source": hypothesis.source,
                         "transform_camera_object": (
                             hypothesis.transform_camera_object.tolist()
                         ),
                     }
-                    for hypothesis in item.hypotheses
+                    for hypothesis, weight in zip(item.hypotheses, weights)
                 ],
             }
         )

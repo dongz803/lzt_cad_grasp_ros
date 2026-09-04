@@ -18,6 +18,9 @@ class GripperSpec:
     minimum_opening_m: float
     maximum_opening_m: float
     finger_clearance_m: float = 0.002
+    finger_thickness_m: float = 0.008
+    finger_width_m: float = 0.022
+    finger_depth_m: float = 0.0375
 
     def __post_init__(self) -> None:
         if self.minimum_opening_m < 0.0:
@@ -26,6 +29,12 @@ class GripperSpec:
             raise ValueError("maximum_opening_m must exceed minimum_opening_m")
         if self.finger_clearance_m < 0.0:
             raise ValueError("finger_clearance_m must be non-negative")
+        if self.finger_thickness_m <= 0.0:
+            raise ValueError("finger_thickness_m must be positive")
+        if self.finger_width_m <= 0.0:
+            raise ValueError("finger_width_m must be positive")
+        if self.finger_depth_m <= 0.0:
+            raise ValueError("finger_depth_m must be positive")
 
 
 @dataclass(frozen=True)
@@ -33,6 +42,9 @@ class GraspGenerationSpec:
     approach_distance_m: float = 0.08
     surface_band_fraction: float = 0.08
     minimum_antipodal_score: float = 0.3
+    minimum_edge_distance_m: float = 0.001
+    maximum_center_of_mass_offset_m: float = 0.02
+    lateral_sample_fraction: float = 0.2
     maximum_candidates: int = 12
 
     def __post_init__(self) -> None:
@@ -42,6 +54,12 @@ class GraspGenerationSpec:
             raise ValueError("surface_band_fraction must lie in (0, 0.5]")
         if not 0.0 <= self.minimum_antipodal_score <= 1.0:
             raise ValueError("minimum_antipodal_score must lie in [0, 1]")
+        if self.minimum_edge_distance_m < 0.0:
+            raise ValueError("minimum_edge_distance_m must be non-negative")
+        if self.maximum_center_of_mass_offset_m <= 0.0:
+            raise ValueError("maximum_center_of_mass_offset_m must be positive")
+        if not 0.0 <= self.lateral_sample_fraction <= 0.5:
+            raise ValueError("lateral_sample_fraction must lie in [0, 0.5]")
         if self.maximum_candidates <= 0:
             raise ValueError("maximum_candidates must be positive")
 
@@ -143,6 +161,9 @@ def load_object_config(path: Path | str, require_mesh: bool = True) -> ObjectCon
         minimum_opening_m=float(gripper_raw.get("minimum_opening_m")),
         maximum_opening_m=float(gripper_raw.get("maximum_opening_m")),
         finger_clearance_m=float(gripper_raw.get("finger_clearance_m", 0.002)),
+        finger_thickness_m=float(gripper_raw.get("finger_thickness_m", 0.008)),
+        finger_width_m=float(gripper_raw.get("finger_width_m", 0.022)),
+        finger_depth_m=float(gripper_raw.get("finger_depth_m", 0.0375)),
     )
 
     generation_raw = _mapping(root.get("grasp_generation", {}), "grasp_generation")
@@ -151,6 +172,15 @@ def load_object_config(path: Path | str, require_mesh: bool = True) -> ObjectCon
         surface_band_fraction=float(generation_raw.get("surface_band_fraction", 0.08)),
         minimum_antipodal_score=float(
             generation_raw.get("minimum_antipodal_score", 0.3)
+        ),
+        minimum_edge_distance_m=float(
+            generation_raw.get("minimum_edge_distance_m", 0.001)
+        ),
+        maximum_center_of_mass_offset_m=float(
+            generation_raw.get("maximum_center_of_mass_offset_m", 0.02)
+        ),
+        lateral_sample_fraction=float(
+            generation_raw.get("lateral_sample_fraction", 0.2)
         ),
         maximum_candidates=int(generation_raw.get("maximum_candidates", 12)),
     )

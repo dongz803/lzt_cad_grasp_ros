@@ -21,11 +21,17 @@ gripper:
   minimum_opening_m: 0.005
   maximum_opening_m: 0.085
   finger_clearance_m: 0.002
+  finger_thickness_m: 0.008
+  finger_width_m: 0.022
+  finger_depth_m: 0.0375
 
 grasp_generation:
   approach_distance_m: 0.08
   surface_band_fraction: 0.08
   minimum_antipodal_score: 0.3
+  minimum_edge_distance_m: 0.001
+  maximum_center_of_mass_offset_m: 0.02
+  lateral_sample_fraction: 0.2
   maximum_candidates: 12
 
 task:

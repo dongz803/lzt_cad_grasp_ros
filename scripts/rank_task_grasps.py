@@ -75,6 +75,20 @@ def _candidates(raw: dict) -> list[GraspCandidate]:
             analytic_quality=float(item["analytic_quality"]),
             approach_distance_m=float(item["approach_distance_m"]),
             antipodal_score=float(item["antipodal_score"]),
+            contact_points_object_m=(
+                None
+                if item.get("contact_points_object_m") is None
+                else np.asarray(item["contact_points_object_m"], dtype=np.float64)
+            ),
+            contact_normals_object=(
+                None
+                if item.get("contact_normals_object") is None
+                else np.asarray(item["contact_normals_object"], dtype=np.float64)
+            ),
+            center_of_mass_offset_m=float(item.get("center_of_mass_offset_m", 0.0)),
+            minimum_edge_distance_m=float(item.get("minimum_edge_distance_m", 0.0)),
+            opening_margin_m=float(item.get("opening_margin_m", 0.0)),
+            finger_collision_free=bool(item.get("finger_collision_free", True)),
         )
         for item in raw["candidates"]
     ]
@@ -140,6 +154,11 @@ def main() -> None:
                 "grasp_id": item.candidate.grasp_id,
                 "robust_score": item.robust_score,
                 "analytic_quality": item.candidate.analytic_quality,
+                "antipodal_score": item.candidate.antipodal_score,
+                "center_of_mass_offset_m": item.candidate.center_of_mass_offset_m,
+                "minimum_edge_distance_m": item.candidate.minimum_edge_distance_m,
+                "opening_margin_m": item.candidate.opening_margin_m,
+                "finger_collision_free": item.candidate.finger_collision_free,
                 "feasible_confidence_mass": item.feasible_confidence_mass,
                 "uncertainty_success": item.uncertainty_success,
                 "travel_score": item.travel_score,

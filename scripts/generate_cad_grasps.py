@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from lzt_cad_grasp_core.cad_grasp import (  # noqa: E402
-    generate_parallel_jaw_candidates,
+    generate_parallel_jaw_candidates_with_diagnostics,
     load_ascii_ply_geometry,
 )
 from lzt_cad_grasp_core.object_config import load_object_config  # noqa: E402
@@ -35,12 +35,30 @@ def main() -> None:
         config.cad_object.mesh_path,
         config.cad_object.units_to_m,
     )
-    candidates = generate_parallel_jaw_candidates(config, geometry)
+    candidates, diagnostics = generate_parallel_jaw_candidates_with_diagnostics(
+        config, geometry
+    )
     payload = {
         "schema_version": 1,
         "object_id": config.cad_object.object_id,
         "object_frame": config.object_frame,
         "candidate_count": len(candidates),
+        "generation_diagnostics": {
+            "evaluated_frames": diagnostics.evaluated_frames,
+            "accepted_before_limit": diagnostics.accepted_before_limit,
+            "returned_candidates": diagnostics.returned_candidates,
+            "rejection_counts": diagnostics.rejection_counts,
+            "center_of_mass_object_m": (
+                diagnostics.center_of_mass_object_m.tolist()
+            ),
+            "mesh_triangle_count": diagnostics.mesh_triangle_count,
+            "quality_weights": {
+                "antipodal": 0.4,
+                "jaw_opening_margin": 0.15,
+                "center_of_mass": 0.25,
+                "edge_distance": 0.2,
+            },
+        },
         "candidates": [
             {
                 "grasp_id": candidate.grasp_id,
@@ -51,6 +69,20 @@ def main() -> None:
                 "approach_distance_m": candidate.approach_distance_m,
                 "antipodal_score": candidate.antipodal_score,
                 "analytic_quality": candidate.analytic_quality,
+                "contact_points_object_m": (
+                    None
+                    if candidate.contact_points_object_m is None
+                    else candidate.contact_points_object_m.tolist()
+                ),
+                "contact_normals_object": (
+                    None
+                    if candidate.contact_normals_object is None
+                    else candidate.contact_normals_object.tolist()
+                ),
+                "center_of_mass_offset_m": candidate.center_of_mass_offset_m,
+                "minimum_edge_distance_m": candidate.minimum_edge_distance_m,
+                "opening_margin_m": candidate.opening_margin_m,
+                "finger_collision_free": candidate.finger_collision_free,
             }
             for candidate in candidates
         ],
@@ -62,7 +94,8 @@ def main() -> None:
     )
     print(
         f"validated {config.cad_object.object_id}; "
-        f"wrote {len(candidates)} candidates to {args.output}"
+        f"wrote {len(candidates)} candidates to {args.output}; "
+        f"rejections={diagnostics.rejection_counts}"
     )
 
 
