@@ -21,7 +21,8 @@
 - 已复制原包的 MuJoCo 机器人资产和三个基线场景；
 - 已实现物料 YAML 校验和 CAD 平行夹爪候选生成，真实 T-LESS CAD 已通过实跑；
 - FoundPose 已安装到隔离环境，并已在 RTX 3060 上完成 T-LESS 粗 6D 位姿推理；
-- 已扩展真实 Top-5 PnP 粗位姿，并输出对称归一化的加权 SE(3) 协方差；
+- 已扩展真实 Top-5 PnP 粗位姿，并输出对称归一化的加权 SE(3) 协方差；对象
+  2–4 已完成完整测试，共形成 777 组、3885 个真实候选；
 - 已将 Top-K SE(3) 协方差按抓取点力臂传播到取料和放料容差，联合 Top-K
   置信度、IK/碰撞回调、解析抓取质量和运动距离输出鲁棒排序；
 - T-LESS BOP19 的 30 个 CAD、20 个场景、1000 张目标图像和 6423 个目标实例已校验完整；
@@ -117,6 +118,18 @@ outputs/foundpose_bop19/official_eval_object<对象号>/
 全部 30 类平均，不能直接当作该物体自身的 AR；单类结果需要从逐阈值文件的
 `obj_recalls` 提取。
 
+对象 2–4 的完整 Top-K 研究结果保存在独立输出树，不会覆盖上述官方 Best-1：
+
+```text
+outputs/foundpose_bop19_topk/inference/tless_bop19_standard_topk_v1/<对象号>/estimated-poses.json
+outputs/foundpose_bop19_topk/inference/tless_bop19_standard_topk_v1/<对象号>/pose-hypotheses-top5.json
+```
+
+前者是 FoundPose 原始 PnP 候选，后者按置信度排序、将平移统一为米，并根据 CAD
+连续对称性归一化后附加 6×6 SE(3) 协方差。对象 2/3/4 分别包含 203/304/270
+个实例，每个实例均有 5 个不同候选。原始 Top-K 中已观察到负深度和极端平移
+离群解，因此这些候选目前用于异常值分析和鲁棒抓取研究，不能未经门控直接执行。
+
 ## 标准 BOP19 与抓取接口
 
 完整 T-LESS 运行采用官方 FoundPose 密度：57 个视点、14 个平面内旋转，即每个
@@ -163,6 +176,14 @@ python3 scripts/rank_task_grasps.py \
 
 正式 BOP 基线使用上游一致的 `best_coarse`；Top-K 研究接口使用独立配置
 `config/foundpose_bop19/tless_infer_topk.json`，避免多个同实例假设改变官方基线排名。
+对象 2–4 的完整 Top-K 可使用以下命令断点续跑：
+
+```bash
+PYOPENGL_PLATFORM=egl $PY scripts/run_bop19_stage.py infer \
+  --config config/foundpose_bop19/tless_infer_topk.json \
+  --output-root outputs/foundpose_bop19_topk \
+  --object-start 2 --object-end 4 --workers 1
+```
 
 ## 场景对应关系
 
@@ -188,9 +209,9 @@ ros2 run lzt_cad_grasp_ros cad_grasp_exploration_node
 
 ## 后续实现顺序
 
-1. 当前保持模板生成暂停；恢复后完成余下 T-LESS 标准模板、表示和完整测试推理；
-2. 生成全量官方 BOP 指标并写入不可变基线清单；
-3. 扩展 ROBI 的标准密度模板和真实实例分割对照实验；
-4. 在训练未见工业 CAD 和 MuJoCo 完整上下料中做消融实验。
+1. 对真实 Top-K 增加正深度、工作空间、几何一致性和不确定度异常门控；
+2. 将通过审计的 Top-K 扩展到对象 5–10，并形成 Best-1/Top-K 对照；
+3. 完善 CAD 抓取候选并接入 MuJoCo 预测位姿上下料闭环；
+4. 扩展 ROBI 与多工业 CAD 实验，再决定何时恢复对象 20–30 的标准模板任务。
 
 具体选择与操作边界见 `docs/FOUNDPOSE_BASELINE.md`。

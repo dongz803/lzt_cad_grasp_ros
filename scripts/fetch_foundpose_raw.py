@@ -122,6 +122,7 @@ def main() -> None:
     for patch_name in (
         "foundpose_topk_coarse.patch",
         "foundpose_cpu_kmeans.patch",
+        "foundpose_repre_version.patch",
     ):
         patch_path = patch_dir / patch_name
         subprocess.run(

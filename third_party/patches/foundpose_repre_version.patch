@@ -1,0 +1,13 @@
+diff --git a/scripts/infer.py b/scripts/infer.py
+index f8caab4..6f5b82d 100644
+--- a/scripts/infer.py
++++ b/scripts/infer.py
+@@ -206,7 +206,7 @@ if __name__ == "__main__":
+         )
+         base_repre_dir = os.path.join(bop_config.output_path, "object_repre")
+         repre_dir = repre_util.get_object_repre_dir_path(
+-            base_repre_dir, opts.version, opts.object_dataset, object_lid
++            base_repre_dir, opts.repre_version, opts.object_dataset, object_lid
+         )
+         repre = repre_util.load_object_repre(
+             repre_dir=repre_dir,

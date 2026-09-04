@@ -96,6 +96,7 @@ def main() -> None:
         project_root / "config/foundpose_bop19/tless_infer.json",
         project_root / "third_party/patches/foundpose_topk_coarse.patch",
         project_root / "third_party/patches/foundpose_cpu_kmeans.patch",
+        project_root / "third_party/patches/foundpose_repre_version.patch",
         project_root / "scripts/run_bop19_stage.py",
         project_root / "scripts/run_foundpose.py",
         project_root / "scripts/export_foundpose_bop.py",

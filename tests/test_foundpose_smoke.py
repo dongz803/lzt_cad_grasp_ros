@@ -29,3 +29,21 @@ def test_foundpose_helpers_are_valid_python() -> None:
     for filename in ("prepare_tless_smoke.py", "run_foundpose.py"):
         source = (PROJECT_ROOT / "scripts" / filename).read_text(encoding="utf-8")
         ast.parse(source, filename=filename)
+
+
+def test_foundpose_inference_uses_configured_representation_version() -> None:
+    patch_name = "foundpose_repre_version.patch"
+    patch = (
+        PROJECT_ROOT / "third_party" / "patches" / patch_name
+    ).read_text(encoding="utf-8")
+    fetch_source = (PROJECT_ROOT / "scripts" / "fetch_foundpose_raw.py").read_text(
+        encoding="utf-8"
+    )
+    freeze_source = (
+        PROJECT_ROOT / "scripts" / "freeze_foundpose_baseline.py"
+    ).read_text(encoding="utf-8")
+
+    assert "-            base_repre_dir, opts.version," in patch
+    assert "+            base_repre_dir, opts.repre_version," in patch
+    assert patch_name in fetch_source
+    assert patch_name in freeze_source
