@@ -13,23 +13,25 @@
 
 ## 当前状态
 
-当前已跑通 FoundPose + T-LESS 小样本，并开始执行标准 BOP19 全量基线；尚未将
-阶段结果宣称为完整论文方法：
+当前已跑通 FoundPose + T-LESS 小样本，并完成标准 BOP19 对象 1–5 的完整链路；
+这仍是阶段基线，不是完整论文方法：
 
 - 已定义 RGB-D 观测、CAD 对象、位姿假设、抓取候选和取放任务的数据契约；
 - 已建立可替换的位姿估计器与任务抓取规划器接口；
 - 已复制原包的 MuJoCo 机器人资产和三个基线场景；
 - 已实现物料 YAML 校验和 CAD 平行夹爪候选生成，真实 T-LESS CAD 已通过实跑；
-- FoundPose 已安装到隔离环境，并已在 RTX 3060 上完成 T-LESS 单图粗 6D 位姿推理；
+- FoundPose 已安装到隔离环境，并已在 RTX 3060 上完成 T-LESS 粗 6D 位姿推理；
 - 已扩展真实 Top-5 PnP 粗位姿，并输出对称归一化的加权 SE(3) 协方差；
 - 已将 Top-K SE(3) 协方差按抓取点力臂传播到取料和放料容差，联合 Top-K
   置信度、IK/碰撞回调、解析抓取质量和运动距离输出鲁棒排序；
 - T-LESS BOP19 的 30 个 CAD、20 个场景、1000 张目标图像和 6423 个目标实例已校验完整；
-- 标准对象 1 已完成 798 模板、对象表示、完整目标推理和官方 VSD/MSSD/MSPD 流程；
+- 标准对象 1–5 均已完成 798 模板、对象表示、完整目标推理、可视化和官方
+  VSD/MSSD/MSPD 流程，共输出 1248 个 6D 位姿；
 - T-LESS 用于第一阶段标准复现；ROBI→BOP 转换、RealSense 深度到 RGB
   重投影、GT 掩膜生成和 FoundPose 数据集注册已实现，Chrome Screw 的5张真实
   RealSense图像、190个反光实例已完成端到端6D位姿验证；
-- 其余对象仍在可恢复批处理中，最终基线尚未冻结。
+- 标准模板已完成对象 1–19；对象 20–30 的模板生成按当前实验安排暂停，已有中间
+  文件保留，最终 30 类基线尚未冻结。
 
 ## 目录
 
@@ -72,8 +74,9 @@ Git 仓库。当前保留三个目录，各自用途不同：
 - `downloads/` 保存三个 T-LESS 下载压缩包和原始 CNOS JSON，约占 891 MB。
   这些内容已经解压并整理到 `bop/`，当前作为原始下载备份保留，不参与推理。
 
-FoundPose 的运行输出位于本仓库的 `outputs/foundpose_smoke/`。内部目录是按“处理
-阶段—数据集—版本—对象编号”组织的，不是三份重复结果：
+FoundPose 的小样本输出位于本仓库的 `outputs/foundpose_smoke/`，标准 BOP19 输出
+位于 `outputs/foundpose_bop19/`。内部目录是按“处理阶段—数据集—版本—对象编号”
+组织的，不是重复结果：
 
 ```text
 outputs/foundpose_smoke/
@@ -100,6 +103,20 @@ MSPD；`20_3_1_0_0.jpg` 展示输入掩膜、候选模板、特征对应以及�
 当前暂不移动、重命名或删除上述目录。后续若确认需要简化，可在不改变 FoundPose
 内部结构的前提下增加“最新 JSON/图片”的快捷入口。
 
+标准对象 1–5 的日常查看入口为：
+
+```text
+outputs/foundpose_bop19/inference/tless_bop19_standard_v1/<对象号>/estimated-poses.json
+outputs/foundpose_bop19/visualizations/object<对象号>_best_pose_overlay.png
+outputs/foundpose_bop19/visualizations/object<对象号>_result_overview.png
+outputs/foundpose_bop19/official_eval_object<对象号>/
+```
+
+前三项依次是数值位姿、最佳样本叠加图和误差分布总览；最后一项是官方 BOP19
+评估的逐阈值匹配文件与分数。单对象提交的顶层 `scores_bop19.json` 仍按 T-LESS
+全部 30 类平均，不能直接当作该物体自身的 AR；单类结果需要从逐阈值文件的
+`obj_recalls` 提取。
+
 ## 标准 BOP19 与抓取接口
 
 完整 T-LESS 运行采用官方 FoundPose 密度：57 个视点、14 个平面内旋转，即每个
@@ -121,8 +138,9 @@ $PY scripts/evaluate_bop19_official.py \
   --result-csv outputs/foundpose_bop19/bop_results/foundpose-bop19-standard_tless-test.csv
 ```
 
-`gen_repre` 在 6 GiB GPU 上被强制为单进程；模板虽允许最多三路，但 RTX 3060
-实测采用两路更稳妥，推理最多两路。显存
+`gen_repre` 在 6 GiB GPU 上被强制为单进程，并采用 GPU 提取 DINOv2/PCA 特征、
+CPU 执行同一 FAISS K-means 的混合模式，避免 FAISS 默认 1 GiB 临时显存导致
+OOM；模板虽允许最多三路，但 RTX 3060 实测采用两路更稳妥，推理最多两路。显存
 profile 测量的是整张 GPU 的总占用，并同时记录运行前基线、峰值和峰值增量。
 
 将 FoundPose 结果转换为项目 Top-K 接口，以及从 CAD 生成物体坐标系抓取候选：
@@ -170,7 +188,7 @@ ros2 run lzt_cad_grasp_ros cad_grasp_exploration_node
 
 ## 后续实现顺序
 
-1. 完成余下 T-LESS 标准模板、表示和完整测试推理；
+1. 当前保持模板生成暂停；恢复后完成余下 T-LESS 标准模板、表示和完整测试推理；
 2. 生成全量官方 BOP 指标并写入不可变基线清单；
 3. 扩展 ROBI 的标准密度模板和真实实例分割对照实验；
 4. 在训练未见工业 CAD 和 MuJoCo 完整上下料中做消融实验。
