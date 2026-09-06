@@ -29,6 +29,9 @@
 - T-LESS BOP19 的 30 个 CAD、20 个场景、1000 张目标图像和 6423 个目标实例已校验完整；
 - 标准对象 1–10 均已完成 798 模板、对象表示、完整目标推理、可视化和官方
   VSD/MSSD/MSPD 流程，共输出 1896 个 6D 位姿；
+- 已建立 GT/CNOS 统一掩膜评价入口，按同一 BOP19 目标、Top-`inst_count`
+  预测预算和一对一匹配输出 IoU、边界 F1、检测召回与逐实例记录，并可在同一
+  报告中汇总 FoundPose MSSD/MSPD；
 - T-LESS 用于第一阶段标准复现；ROBI→BOP 转换、RealSense 深度到 RGB
   重投影、GT 掩膜生成和 FoundPose 数据集注册已实现，Chrome Screw 的5张真实
   RealSense图像、190个反光实例已完成端到端6D位姿验证；
@@ -131,6 +134,26 @@ outputs/foundpose_bop19_topk/inference/tless_bop19_standard_topk_v1/<对象号>/
 6×6 SE(3) 协方差。对象 2/3/4 分别包含 203/304/270
 个实例，每个实例均有 5 个不同候选。原始 Top-K 中已观察到负深度和极端平移
 离群解，因此这些候选目前用于异常值分析和鲁棒抓取研究，不能未经门控直接执行。
+
+### GT/CNOS 统一评价
+
+统一评价脚本始终把可见 GT mask 作为理想上限；CNOS 默认复现 FoundPose 的
+每目标 Top-`inst_count` 选择和 3×3 开运算。对象 1–10 的当前基线命令为：
+
+```bash
+python3 scripts/evaluate_mask_sources.py \
+  --object-ids 1 2 3 4 5 6 7 8 9 10 \
+  --pose-root cnos=outputs/foundpose_bop19/inference/tless_bop19_standard_v1 \
+  --output-dir outputs/mask_evaluation/tless_objects1_10_gt_cnos
+```
+
+结果写入 `summary.json` 和 `matches.csv`。前者保存整体、逐对象和可选下游位姿
+指标，后者保存每个目标槽位的预测排名、分数、匹配 GT、IoU、像素精确率/召回率、
+边界 F1、中心误差和面积比。新增改进分割可通过重复的
+`--detections improved=<BOP检测JSON>` 接入，不需要修改评价代码。
+
+GT-mask FoundPose 使用独立配置 `config/foundpose_bop19/tless_infer_gt.json`，
+结果版本为 `bop19_standard_gt_v1`，不会覆盖 CNOS 基线。该推理尚未批量运行。
 
 ## 标准 BOP19 与抓取接口
 

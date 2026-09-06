@@ -161,6 +161,33 @@ Toolkit 各阈值文件的单类 `obj_recalls` 正确汇总所得。
 显著低于其余对象，并出现极端错误 PnP 位姿。该对象应保留为后续检测失败、模板
 匹配歧义和粗位姿异常值处理的重点案例，不能用最佳图片代表整体效果。
 
+### GT/CNOS 统一掩膜评价
+
+2026-09-06 新增 `scripts/evaluate_mask_sources.py`，使用同一份 BOP19
+`test_targets_bop19.json` 比较可见 GT mask、CNOS 和后续改进分割。所有检测源
+统一按分数保留 Top-`inst_count`，CNOS 默认执行与 FoundPose 相同的 3×3
+开运算，并使用按分数排序的一对一 IoU 匹配。输出包括整体及逐对象 IoU、像素
+精确率/召回率、边界 F1、中心误差、面积比、IoU 0.50/0.75 检测指标和逐实例 CSV。
+
+对象 1–10 共 2012 个目标组、3239 个目标实例。GT 上限的各项重叠指标均为 1；
+CNOS 有 2565 个实际送入 FoundPose 预算的预测，缺少 674 个目标槽位，目标平均
+IoU 为 0.4586、平均边界 F1 为 0.3667，IoU 0.50/0.75 召回率分别为
+0.5403/0.4853。对象 8 的目标平均 IoU 仅 0.0843，IoU 0.50 召回率仅 0.0733，
+说明其低位姿覆盖率首先包含显著的检测/分割问题，不能全部归因于 PnP。
+
+当前报告位于：
+
+```text
+outputs/mask_evaluation/tless_objects1_10_gt_cnos/summary.json
+outputs/mask_evaluation/tless_objects1_10_gt_cnos/matches.csv
+```
+
+可选 `--pose-root NAME=PATH` 会以同一目标分母汇总对应 FoundPose 的覆盖率与
+初步 MSSD/MSPD。GT 位姿推理使用隔离配置
+`config/foundpose_bop19/tless_infer_gt.json`，但本次只建立配置和评价入口，尚未
+运行对象 1–10 的 GT-mask FoundPose 推理，因此不能把 GT/CNOS 的位姿差异称为
+已完成实验。
+
 ### 对象 2–4 的标准 Top-K 结果
 
 2026-09-04 使用独立版本 `bop19_standard_topk_v1` 完成对象 2–4 的完整测试推理，

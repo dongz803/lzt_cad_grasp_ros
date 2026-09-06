@@ -26,6 +26,13 @@ from .task_grasp import (
     rank_task_grasps,
 )
 from .robi_bop import ROBI_OBJECT_IDS, convert_robi_realsense_to_bop
+from .mask_evaluation import (
+    boundary_f1,
+    decode_coco_rle,
+    evaluate_bop_mask_sources,
+    mask_pair_metrics,
+    summarize_foundpose_results,
+)
 
 
 def build_workcell_model(*args, **kwargs):
@@ -66,6 +73,11 @@ __all__ = [
     "rank_task_grasps",
     "ROBI_OBJECT_IDS",
     "convert_robi_realsense_to_bop",
+    "boundary_f1",
+    "decode_coco_rle",
+    "evaluate_bop_mask_sources",
+    "mask_pair_metrics",
+    "summarize_foundpose_results",
     "build_workcell_model",
     "build_workcell_spec",
 ]
