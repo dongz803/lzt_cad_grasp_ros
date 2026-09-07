@@ -201,7 +201,7 @@ def foundpose_records_to_top_k(
                 ),
                 confidence=float(np.clip(float(record.get("score", 0.0)), 0.0, 1.0)),
                 symmetry_class="identity",
-                source="foundpose_coarse",
+                source=str(record.get("source", "foundpose_coarse")),
                 hypothesis_id=int(record.get("hypothesis_id", index)),
             )
             for index, record in enumerate(group[:top_k])

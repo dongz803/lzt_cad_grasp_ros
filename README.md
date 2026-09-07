@@ -32,6 +32,14 @@
 - 已建立 GT/CNOS 统一掩膜评价入口，按同一 BOP19 目标、Top-`inst_count`
   预测预算和一对一匹配输出 IoU、边界 F1、检测召回与逐实例记录，并可在同一
   报告中汇总 FoundPose MSSD/MSPD；
+- 已实现带保守回退的 RGB-D mask 修正：只在深度不一致区域达到 10%–25%、
+  RGB 引导增长不超过 8% 时采用修正，否则保留 CNOS 原 mask；对象 2–4 的平均
+  IoU、边界 F1 和 IoU≥0.75 召回率分别由 0.42118/0.37466/0.45455 提升到
+  0.42165/0.37549/0.45666；
+- 已完成对象 2–4 的 Top-K 正深度、相机工作空间、PnP 内点/分数、CAD 重投影
+  轮廓和深度一致性门控，并使用几何质量重加权后重新计算对称性感知协方差；
+  3885 个候选保留 1949 个，777 组中 672 组保留安全候选，门控 Top-1 中位
+  MSSD/MSPD 由 25.19 mm/19.60 px 降到 11.38 mm/17.24 px；
 - T-LESS 用于第一阶段标准复现；ROBI→BOP 转换、RealSense 深度到 RGB
   重投影、GT 掩膜生成和 FoundPose 数据集注册已实现，Chrome Screw 的5张真实
   RealSense图像、190个反光实例已完成端到端6D位姿验证；
@@ -155,6 +163,45 @@ python3 scripts/evaluate_mask_sources.py \
 GT-mask FoundPose 使用独立配置 `config/foundpose_bop19/tless_infer_gt.json`，
 结果版本为 `bop19_standard_gt_v1`，不会覆盖 CNOS 基线。该推理尚未批量运行。
 
+### RGB-D mask 修正与 Top-K 异常门控
+
+mask 修正不读取 GT，只利用 CNOS mask 内部的鲁棒深度区间、邻域 RGB Lab
+一致性和连通区域。保守保护条件防止后处理破坏原本正确的 mask：
+
+```bash
+python3 scripts/refine_bop_masks.py \
+  --object-ids 2 3 4 \
+  --output-dir outputs/mask_refinement/tless_objects2_4_guarded
+
+python3 scripts/evaluate_mask_sources.py \
+  --object-ids 2 3 4 \
+  --detections cnos=/home/lzt/lzt_ros2_ws/datasets/bop/detections/cnos-fastsam/cnos-fastsam_tless-test.json \
+  --detections rgbd=outputs/mask_refinement/tless_objects2_4_guarded/detections_rgbd_refined.json \
+  --source-opening cnos=3 --source-opening rgbd=3 \
+  --output-dir outputs/mask_evaluation/tless_objects2_4_rgbd_guarded_compare
+```
+
+随后对原始 FoundPose Top-K 做候选级门控。以下命令分别运行对象 2–4：
+
+```bash
+export BOP_PATH=/home/lzt/lzt_ros2_ws/datasets/bop
+for obj in 2 3 4; do
+  python3 scripts/gate_foundpose_topk.py \
+    --input outputs/foundpose_bop19_topk/inference/tless_bop19_standard_topk_v1/$obj/estimated-poses.json \
+    --object-config config/objects/tless_$(printf '%06d' "$obj").yaml \
+    --detections outputs/mask_refinement/tless_objects2_4_guarded/detections_rgbd_refined.json \
+    --output-dir outputs/pose_gating/tless_$(printf '%06d' "$obj")
+done
+```
+
+每个对象输出 `summary.json`、逐候选 `audit.json/candidates.csv`、门控后的
+`gated-poses.json` 和重新归并/估计协方差的 `pose-hypotheses-gated.json`。
+门控过程不使用 MSSD/MSPD；这两个真值指标仅在结束后写入 `evaluation_only`
+用于论文对照。当前 T-LESS 离线图像没有机器人外参，因此相机工作空间门控已启用，
+机器人工作空间接口已实现但未启用；传入 `--robot-camera-transform` 和机器人边界
+后才能进行有物理意义的机器人工作空间检查。CAD 投影采用确定性 CPU 点渲染，
+适合候选筛选，但后续仍应与精确三角网格渲染做消融。
+
 ## 标准 BOP19 与抓取接口
 
 完整 T-LESS 运行采用官方 FoundPose 密度：57 个视点、14 个平面内旋转，即每个
@@ -246,9 +293,11 @@ ros2 run lzt_cad_grasp_ros cad_grasp_exploration_node
 
 ## 后续实现顺序
 
-1. 对真实 Top-K 增加正深度、工作空间、几何一致性和不确定度异常门控；
-2. 将通过审计的 Top-K 扩展到对象 5–10，并形成 Best-1/Top-K 对照；
-3. 将已通过 CAD 几何过滤的候选接入 MuJoCo 预测位姿上下料闭环；
-4. 扩展 ROBI 与多工业 CAD 实验，再决定何时恢复对象 20–30 的标准模板任务。
+1. 用对象 8–10 冻结集验证 RGB-D mask 修正，另行运行改进 mask 下的 FoundPose；
+2. 将通过审计的 Top-K 门控扩展到对象 5–10，并形成 Best-1/原始 Top-K/门控
+   Top-K 对照；
+3. 标定机器人—相机外参，启用机器人工作空间、IK 和场景碰撞检查；
+4. 将门控后的位姿与 CAD 候选接入 MuJoCo 预测位姿上下料闭环；
+5. 扩展 ROBI 与多工业 CAD 实验，再决定何时恢复对象 20–30 的标准模板任务。
 
 具体选择与操作边界见 `docs/FOUNDPOSE_BASELINE.md`。

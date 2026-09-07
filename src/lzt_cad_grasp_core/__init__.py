@@ -33,6 +33,23 @@ from .mask_evaluation import (
     mask_pair_metrics,
     summarize_foundpose_results,
 )
+from .mask_refinement import (
+    RGBDMaskRefinementConfig,
+    RGBDMaskRefinementResult,
+    binary_mask_to_rle,
+    mask_bbox_xywh,
+    refine_rgbd_mask,
+)
+from .pose_gating import (
+    PoseGateConfig,
+    PoseGateDecision,
+    contour_reprojection_error_px,
+    evaluate_pose_candidate,
+    foundpose_record_transform,
+    render_model_points,
+    reweighted_foundpose_record,
+    sample_model_points,
+)
 
 
 def build_workcell_model(*args, **kwargs):
@@ -78,6 +95,19 @@ __all__ = [
     "evaluate_bop_mask_sources",
     "mask_pair_metrics",
     "summarize_foundpose_results",
+    "RGBDMaskRefinementConfig",
+    "RGBDMaskRefinementResult",
+    "binary_mask_to_rle",
+    "mask_bbox_xywh",
+    "refine_rgbd_mask",
+    "PoseGateConfig",
+    "PoseGateDecision",
+    "contour_reprojection_error_px",
+    "evaluate_pose_candidate",
+    "foundpose_record_transform",
+    "render_model_points",
+    "reweighted_foundpose_record",
+    "sample_model_points",
     "build_workcell_model",
     "build_workcell_spec",
 ]
