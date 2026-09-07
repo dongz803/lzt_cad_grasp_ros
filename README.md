@@ -39,7 +39,10 @@
 - 已完成对象 2–4 的 Top-K 正深度、相机工作空间、PnP 内点/分数、CAD 重投影
   轮廓和深度一致性门控，并使用几何质量重加权后重新计算对称性感知协方差；
   3885 个候选保留 1949 个，777 组中 672 组保留安全候选，门控 Top-1 中位
-  MSSD/MSPD 由 25.19 mm/19.60 px 降到 11.38 mm/17.24 px；
+  MSSD/MSPD 由 25.19 mm/19.60 px 降到 11.38 mm/17.24 px；固定全部 1419 个
+  BOP 目标实例并采用官方一对一匹配后，目标覆盖率由 54.76% 降到 47.36%，
+  对象 2–4 宏平均 BOP AR 由 0.2914 提升到 0.3592，其中 MSSD/VSD 提升，
+  MSPD 从 0.4855 降到 0.4531；
 - T-LESS 用于第一阶段标准复现；ROBI→BOP 转换、RealSense 深度到 RGB
   重投影、GT 掩膜生成和 FoundPose 数据集注册已实现，Chrome Screw 的5张真实
   RealSense图像、190个反光实例已完成端到端6D位姿验证；
@@ -201,6 +204,34 @@ done
 机器人工作空间接口已实现但未启用；传入 `--robot-camera-transform` 和机器人边界
 后才能进行有物理意义的机器人工作空间检查。CAD 投影采用确定性 CPU 点渲染，
 适合候选筛选，但后续仍应与精确三角网格渲染做消融。
+
+### 覆盖率公平的 Top-K 评价
+
+门控允许拒绝全部候选，因此不能只比较“保留下来的位姿”中位误差。
+`scripts/evaluate_topk_coverage.py` 固定使用 BOP19 `test_targets_bop19.json`
+中的目标实例数作为分母；缺失检测、PnP 失败和门控后全拒绝都计为失败。同时输出
+完整工作点、相同覆盖率比较、风险—覆盖率曲线、仅用于分析的 Top-K GT oracle，
+以及供官方 BOP Toolkit 做一对一 GT 匹配的结果 CSV：
+
+```bash
+PY=/home/lzt/lzt_ros2_ws/.envs/foundpose_gpu/bin/python
+$PY scripts/evaluate_topk_coverage.py \
+  --method raw=outputs/foundpose_bop19_topk/inference/tless_bop19_standard_topk_v1/2/estimated-poses.json \
+  --method raw=outputs/foundpose_bop19_topk/inference/tless_bop19_standard_topk_v1/3/estimated-poses.json \
+  --method raw=outputs/foundpose_bop19_topk/inference/tless_bop19_standard_topk_v1/4/estimated-poses.json \
+  --method gated=outputs/pose_gating/tless_000002/gated-poses.json \
+  --method gated=outputs/pose_gating/tless_000003/gated-poses.json \
+  --method gated=outputs/pose_gating/tless_000004/gated-poses.json \
+  --object-id 2 --object-id 3 --object-id 4 \
+  --output-dir outputs/topk_evaluation/tless_objects2_4_v1 \
+  --run-official --official-workers 1
+```
+
+无图形环境时，官方 VSD 渲染需要 EGL，例如在命令前添加
+`PYOPENGL_PLATFORM=egl`。输出目录中的 `summary.json` 是完整机器可读报告，
+`risk_coverage.csv` 和 `risk_coverage.svg` 分别用于统计和画图，`bop_results/`
+与 `official_eval/` 保存官方协议的输入和结果。快速的记录内 MSSD/MSPD 只用于
+调试；论文主结果应引用 `official_bop19`，并同时报告目标覆盖率。
 
 ## 标准 BOP19 与抓取接口
 

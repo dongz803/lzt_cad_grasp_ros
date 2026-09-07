@@ -253,6 +253,37 @@ outputs/mask_evaluation/tless_objects1_10_gt_cnos/matches.csv
 空间；机器人工作空间代码接口已实现，必须在标定后才能启用。CPU CAD 投影采用
 点渲染近似，后续需与精确三角网格渲染对照。
 
+上述 86.5% 是“原始已有位姿的 777 组”内的条件覆盖率，不能作为端到端覆盖率。
+2026-09-07 新增 `src/lzt_cad_grasp_core/topk_evaluation.py` 和
+`scripts/evaluate_topk_coverage.py`，固定使用对象 2–4 的 1419 个 BOP19 目标实例
+作为分母。缺失检测、PnP 失败和门控后全拒绝均计为失败；每个检测只选一个 Top-1，
+每个图像/对象最多输出 `inst_count` 个预测，再交给官方 BOP Toolkit 做一对一匹配。
+
+公平评价结果如下：
+
+| 方法 | 输出位姿/目标 | 目标覆盖率 | 官方 MSSD AR | 官方 MSPD AR | 官方 VSD AR | 三指标 AR |
+|---|---:|---:|---:|---:|---:|---:|
+| 原始 Top-K 分数 Top-1 | 777/1419 | 0.5476 | 0.2095 | 0.4855 | 0.1793 | 0.2914 |
+| RGB-D 几何门控 Top-1 | 672/1419 | 0.4736 | 0.3367 | 0.4531 | 0.2876 | 0.3592 |
+
+门控使三指标宏平均 AR 绝对提高 0.0677（相对约 23.2%），MSSD 和 VSD 明显提高，
+但以少输出 105 个位姿、目标覆盖率下降 7.40 个百分点为代价，且 MSPD 绝对下降
+0.0323。因此结论应表述为“门控提高了三维表面和可见表面可靠性，但当前二维投影
+排序仍需改进”，不能只引用保留样本的中位误差。对象 2、3、4 的三指标 AR 分别从
+0.2237/0.4461/0.2045 提升到 0.2699/0.5520/0.2556。
+
+同样保留 672 个位姿（47.36%目标覆盖率）时，记录内快速评价的条件 MSSD AR
+由原始排序的 0.3996 提升到门控排序的 0.6750；MSPD AR 由 0.6641 小幅提升到
+0.6763。该结果说明收益不完全来自拒绝更多样本，但记录内误差没有官方一对一匹配，
+论文主结果仍以上表为准。完整报告、风险—覆盖率曲线和官方逐阈值文件位于：
+
+```text
+outputs/topk_evaluation/tless_objects2_4_v1/summary.json
+outputs/topk_evaluation/tless_objects2_4_v1/risk_coverage.csv
+outputs/topk_evaluation/tless_objects2_4_v1/risk_coverage.svg
+outputs/topk_evaluation/tless_objects2_4_v1/official_eval/
+```
+
 Top-K 独立版本首次运行还暴露了 FoundPose 源码使用 `version` 而不是
 `repre_version` 查找对象表示的问题。兼容修正已保存为
 `third_party/patches/foundpose_repre_version.patch`，并纳入源码拉取和基线冻结输入；
