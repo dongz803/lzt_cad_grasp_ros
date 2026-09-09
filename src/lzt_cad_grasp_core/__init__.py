@@ -60,6 +60,40 @@ from .pose_gating import (
     reweighted_foundpose_record,
     sample_model_points,
 )
+from .pose_refinement import (
+    PoseAlignmentMetrics,
+    PoseRefinementConfig,
+    PoseRefinementResult,
+    evaluate_pose_alignment,
+    refine_pose_rgbd,
+)
+from .robot_frames import (
+    RobotCameraCalibration,
+    load_robot_camera_calibration,
+    mujoco_base_camera_calibration,
+    mujoco_transform_base_world,
+    transform_camera_object_to_base,
+    validate_transform,
+)
+
+
+_MUJOCO_EXPORTS = {
+    "CollisionCheckResult",
+    "IKSolution",
+    "MujocoUR5eConstraintEvaluator",
+    "RobotConstraintConfig",
+    "check_joint_path_collisions",
+    "solve_site_ik",
+}
+
+
+def __getattr__(name):
+    """Load robot constraints lazily for perception-only Python environments."""
+    if name in _MUJOCO_EXPORTS:
+        from . import robot_constraints
+
+        return getattr(robot_constraints, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def build_workcell_model(*args, **kwargs):
@@ -126,6 +160,23 @@ __all__ = [
     "render_model_points",
     "reweighted_foundpose_record",
     "sample_model_points",
+    "PoseAlignmentMetrics",
+    "PoseRefinementConfig",
+    "PoseRefinementResult",
+    "evaluate_pose_alignment",
+    "refine_pose_rgbd",
+    "CollisionCheckResult",
+    "IKSolution",
+    "MujocoUR5eConstraintEvaluator",
+    "RobotConstraintConfig",
+    "check_joint_path_collisions",
+    "solve_site_ik",
+    "RobotCameraCalibration",
+    "load_robot_camera_calibration",
+    "mujoco_base_camera_calibration",
+    "mujoco_transform_base_world",
+    "transform_camera_object_to_base",
+    "validate_transform",
     "build_workcell_model",
     "build_workcell_spec",
 ]

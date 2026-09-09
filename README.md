@@ -43,6 +43,12 @@
   BOP 目标实例并采用官方一对一匹配后，目标覆盖率由 54.76% 降到 47.36%，
   对象 2–4 宏平均 BOP AR 由 0.2914 提升到 0.3592，其中 MSSD/VSD 提升，
   MSPD 从 0.4855 降到 0.4531；
+- 已增加 CAD 轮廓与 RGB-D 深度反馈的局部 SE(3) 位姿修正，并以独立脚本保存
+  修正前后指标、审计 JSON 和轮廓预览；对象 2 的单图 3 候选 MSSD 均降低，但
+  MSPD 有小幅波动，因此尚不把 smoke test 当作全数据集提升结论；
+- 已接通 `T_base_object = T_base_camera × T_camera_object`、MuJoCo 仿真精确
+  外参、UR5e Jacobian 阻尼最小二乘 IK 和逐段路径接触检查，排序结果会输出基座系
+  抓取矩阵、六关节解和碰撞对；实机仍需单独完成手眼标定；
 - T-LESS 用于第一阶段标准复现；ROBI→BOP 转换、RealSense 深度到 RGB
   重投影、GT 掩膜生成和 FoundPose 数据集注册已实现，Chrome Screw 的5张真实
   RealSense图像、190个反光实例已完成端到端6D位姿验证；
@@ -324,11 +330,14 @@ ros2 run lzt_cad_grasp_ros cad_grasp_exploration_node
 
 ## 后续实现顺序
 
-1. 用对象 8–10 冻结集验证 RGB-D mask 修正，另行运行改进 mask 下的 FoundPose；
-2. 将通过审计的 Top-K 门控扩展到对象 5–10，并形成 Best-1/原始 Top-K/门控
+1. 对对象 2–4 全量运行 CAD/RGB-D 位姿修正，并用固定分母与官方 BOP 指标确认
+   MSSD 改善是否能保持，同时处理 MSPD 权衡；
+2. 用对象 8–10 冻结集验证 RGB-D mask 修正，另行运行改进 mask 下的 FoundPose；
+3. 将通过审计的 Top-K 门控扩展到对象 5–10，并形成 Best-1/原始 Top-K/门控
    Top-K 对照；
-3. 标定机器人—相机外参，启用机器人工作空间、IK 和场景碰撞检查；
-4. 将门控后的位姿与 CAD 候选接入 MuJoCo 预测位姿上下料闭环；
-5. 扩展 ROBI 与多工业 CAD 实验，再决定何时恢复对象 20–30 的标准模板任务。
+4. 将目标工业 CAD 作为碰撞体导入 MuJoCo，并执行预测位姿驱动的完整上下料；
+5. 实机手眼标定后替换仿真外参，验证真实工作空间、IK 和碰撞检查；
+6. 扩展 ROBI 与多工业 CAD 实验，再决定何时恢复对象 20–30 的标准模板任务。
 
-具体选择与操作边界见 `docs/FOUNDPOSE_BASELINE.md`。
+具体选择与操作边界见 `docs/FOUNDPOSE_BASELINE.md`，新增位姿修正与机器人约束链
+见 `docs/POSE_REFINEMENT_AND_ROBOT_CONSTRAINTS.md`。

@@ -46,10 +46,20 @@ class MotionConstraintResult:
     place_collision_free: bool = True
     normalized_margin: float = 1.0
     reason: str = ""
+    pick_joint_positions_rad: tuple[float, ...] | None = None
+    place_joint_positions_rad: tuple[float, ...] | None = None
+    collision_pairs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.normalized_margin <= 1.0:
             raise ValueError("normalized_margin must lie in [0, 1]")
+        for field_name in (
+            "pick_joint_positions_rad",
+            "place_joint_positions_rad",
+        ):
+            values = getattr(self, field_name)
+            if values is not None and not all(np.isfinite(values)):
+                raise ValueError(f"{field_name} must contain finite values")
 
     @property
     def feasible(self) -> bool:

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "base_frame": "ur5e_base",
+  "camera_frame": "vision_camera_opencv",
+  "camera_convention": "opencv_x_right_y_down_z_forward",
+  "source": "mujoco_exact_model_extrinsic",
+  "scene": "exploration_workcell.xml",
+  "transform_base_camera_cv": [
+    [3.6732051033050443e-06, -0.39760743791225417, 0.9175556251821252, -0.7499971367660052],
+    [-0.9999999999932537, -1.4604936700611883e-06, 3.3703700050079696e-06, -0.7800027548985724],
+    [0.0, -0.9175556251883152, -0.3976074379149366, 0.38950000380378647],
+    [0.0, 0.0, 0.0, 1.0]
+  ]
+}

@@ -14,6 +14,16 @@ GRIPPER_PREFIX = "gripper_"
 UR5E_HOME_KEY = f"{UR5E_PREFIX}home"
 D435_CAMERA_NAME = f"{UR5E_PREFIX}{GRIPPER_PREFIX}d435_camera"
 GRIPPER_ACTUATOR_NAME = f"{UR5E_PREFIX}{GRIPPER_PREFIX}fingers_actuator"
+GRIPPER_PINCH_SITE = f"{UR5E_PREFIX}{GRIPPER_PREFIX}pinch"
+UR5E_BASE_BODY = f"{UR5E_PREFIX}base"
+UR5E_JOINT_NAMES = (
+    f"{UR5E_PREFIX}shoulder_pan_joint",
+    f"{UR5E_PREFIX}shoulder_lift_joint",
+    f"{UR5E_PREFIX}elbow_joint",
+    f"{UR5E_PREFIX}wrist_1_joint",
+    f"{UR5E_PREFIX}wrist_2_joint",
+    f"{UR5E_PREFIX}wrist_3_joint",
+)
 
 
 def build_workcell_spec(
