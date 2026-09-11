@@ -24,6 +24,14 @@ UR5E_JOINT_NAMES = (
     f"{UR5E_PREFIX}wrist_2_joint",
     f"{UR5E_PREFIX}wrist_3_joint",
 )
+UR5E_ACTUATOR_NAMES = (
+    f"{UR5E_PREFIX}shoulder_pan",
+    f"{UR5E_PREFIX}shoulder_lift",
+    f"{UR5E_PREFIX}elbow",
+    f"{UR5E_PREFIX}wrist_1",
+    f"{UR5E_PREFIX}wrist_2",
+    f"{UR5E_PREFIX}wrist_3",
+)
 
 
 def build_workcell_spec(

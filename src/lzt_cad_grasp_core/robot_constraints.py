@@ -296,6 +296,30 @@ def check_joint_path_collisions(
     )
 
 
+def current_disallowed_robot_contacts(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    *,
+    penetration_tolerance_m: float = -1e-6,
+    ignored_environment_bodies: Sequence[str] = ("target",),
+) -> tuple[str, ...]:
+    """Return forbidden robot contacts in the current dynamic state."""
+
+    ignored = set(ignored_environment_bodies)
+    pairs: set[str] = set()
+    for contact_id in range(data.ncon):
+        contact = data.contact[contact_id]
+        if float(contact.dist) >= penetration_tolerance_m:
+            continue
+        geom1, geom2 = int(contact.geom1), int(contact.geom2)
+        if not _disallowed_contact_pair(model, geom1, geom2, ignored):
+            continue
+        pairs.add(
+            f"{_geom_label(model, geom1)} <-> {_geom_label(model, geom2)}"
+        )
+    return tuple(sorted(pairs))
+
+
 @dataclass(frozen=True)
 class RobotConstraintConfig:
     """IK and path-collision settings for one grasp feasibility query."""

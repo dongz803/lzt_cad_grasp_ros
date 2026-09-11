@@ -49,6 +49,11 @@
 - 已接通 `T_base_object = T_base_camera × T_camera_object`、MuJoCo 仿真精确
   外参、UR5e Jacobian 阻尼最小二乘 IK 和逐段路径接触检查，排序结果会输出基座系
   抓取矩阵、六关节解和碰撞对；实机仍需单独完成手眼标定；
+- 已将 T-LESS 物体 4 的同一 CAD 动态注入 MuJoCo，接通固定相机 RGB-D/GT mask、
+  FoundPose Top-K、RGB-D 门控与局部修正、CAD 抓取、UR5e IK、路径碰撞检查和
+  夹爪动力学；GT 位姿闭环平面误差 3.70 mm，未修正 FoundPose 闭环为 6.49 mm
+  （未过 5 mm 阈值），修正后预测位姿闭环三维放置误差 2.63 mm、对称轴误差
+  0.33°，无禁止接触并通过验收；
 - T-LESS 用于第一阶段标准复现；ROBI→BOP 转换、RealSense 深度到 RGB
   重投影、GT 掩膜生成和 FoundPose 数据集注册已实现，Chrome Screw 的5张真实
   RealSense图像、190个反光实例已完成端到端6D位姿验证；
@@ -311,8 +316,125 @@ outputs/task_grasps/tless_00000<对象号>_topk_set0.json
 - `scenes/baseline_vision_single.xml`：原单铜柱 RGB-D 场景；
 - `scenes/baseline_vision_ten.xml`：原十铜柱无遮挡场景；
 - `scenes/exploration_workcell.xml`：原完整上下料工作台场景。
+- `scenes/industrial_cad_single.xml`：工业 CAD 动态注入场景；不再把铜柱固定写在 XML，
+  由执行脚本按物料 YAML 选择 CAD。
 
 这些文件是新路线的初始环境副本。后续修改新场景不会影响传统基线包。
+
+## 工业 CAD 端到端执行基准
+
+先用仿真真值位姿验证“位姿之后”的整条执行链，避免把视觉误差与机械执行错误混在
+一起。默认对象是 T-LESS 4，CAD、抓取候选和动态碰撞体来自同一个物料配置：
+
+```bash
+cd /home/lzt/lzt_ros2_ws
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install --packages-select lzt_cad_grasp_ros
+source install/setup.bash
+export BOP_PATH=/home/lzt/lzt_ros2_ws/datasets/bop
+
+# 只采集 RGB-D/掩膜并审核 IK 与碰撞路径，不执行运动
+MUJOCO_GL=egl python3 src/lzt_cad_grasp_ros/scripts/run_industrial_cad_pick_place.py \
+  --check-only
+
+# 无窗口完整执行并保存结果
+MUJOCO_GL=egl python3 src/lzt_cad_grasp_ros/scripts/run_industrial_cad_pick_place.py
+
+# 打开 MuJoCo 窗口观察完整过程
+python3 src/lzt_cad_grasp_ros/scripts/run_industrial_cad_pick_place.py --viewer
+```
+
+未指定 `--output` 时，结果按对象、输入类型、执行模式、运行编号和随机种子保存，
+例如：
+
+```text
+outputs/industrial_cad_pick_place/tless_000004/
+├── gt_check/<run_id>_seed0/
+├── gt_dynamic/<run_id>_seed0/
+├── predicted_check/<run_id>_seed0/
+└── predicted_dynamic/<run_id>_seed0/
+```
+
+已有非空运行目录绝不会被覆盖。每次运行额外保存 `run_manifest.json` 和
+`config_snapshot/`，记录命令、随机种子、Git 提交/状态、环境、输入副本及 SHA256。
+主要结果文件包括：
+
+- `initial_rgb.png`、`initial_depth.png`、`initial_gt_mask.png`：同一固定相机观测；
+- `observation.json`：内参和 `T_camera_object`；
+- `plan.json`：所选 CAD 抓取、7 个关节路点、IK 与碰撞审计；
+- `00_home.png` 至 `08_retreated.png`、`pick_place.gif`：执行过程；
+- `result.json`：抬升、放置误差、稳定性、禁止接触和最终成功判据。
+
+以上默认命令使用 `mujoco_ground_truth` 位姿，作用是冻结一个可回归的机械执行
+基线。完整预测闭环可用一条命令运行：
+
+```bash
+cd /home/lzt/lzt_ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+python3 src/lzt_cad_grasp_ros/scripts/run_tless_obj4_pipeline.py \
+  --run-id system_baseline_v1 --seed 0
+```
+
+该命令依次运行“采集 → FoundPose Top-K → RGB-D 门控 → CAD/深度位姿修正 →
+抓放”，结果隔离到
+`outputs/system_baselines/tless_000004/system_baseline_v1_seed0/`。顶层
+`pipeline_manifest.json` 记录各阶段命令、耗时、返回码和方法边界，
+`pipeline_result.json` 汇总最终验收。当前单图导出使用 GT mask 隔离分割误差，
+但 FoundPose、RGB-D 门控和修正均不读取 GT 位姿；GT 位姿仅用于仿真结束后的
+误差审计。
+
+如需逐阶段调试，下列命令与一键脚本等价：
+
+```bash
+# 1. 将同一仿真观测导出为单图 T-LESS BOP 输入
+MUJOCO_GL=egl python3 src/lzt_cad_grasp_ros/scripts/run_industrial_cad_pick_place.py \
+  --image-width 720 --image-height 540 \
+  --run-id capture_debug --seed 0 \
+  --export-bop-root /home/lzt/lzt_ros2_ws/datasets/bop_mujoco_obj4 --check-only
+
+# 2. 用已有对象 4 表示运行 FoundPose Top-K
+cd /home/lzt/lzt_ros2_ws/src/lzt_cad_grasp_ros
+FPY=/home/lzt/lzt_ros2_ws/.envs/foundpose_gpu/bin/python
+BOP_PATH=/home/lzt/lzt_ros2_ws/datasets/bop_mujoco_obj4 \
+BOP_OUTPUT_PATH=$PWD/outputs/foundpose_bop19 PYOPENGL_PLATFORM=egl \
+  $FPY scripts/run_foundpose.py infer \
+  --opts-path config/foundpose_bop19/tless_mujoco_obj4_infer.json
+
+# 3. 使用轮廓和深度门控 Top-K，再做不使用 GT 位姿的局部修正
+cd /home/lzt/lzt_ros2_ws
+export BOP_PATH=/home/lzt/lzt_ros2_ws/datasets/bop
+python3 src/lzt_cad_grasp_ros/scripts/gate_foundpose_topk.py \
+  --input src/lzt_cad_grasp_ros/outputs/foundpose_bop19/inference/tless_mujoco_obj4_gtmask_v1/4/estimated-poses.json \
+  --object-config src/lzt_cad_grasp_ros/config/objects/tless_000004.yaml \
+  --detections datasets/bop_mujoco_obj4/gt-mask-detections.json \
+  --dataset-root datasets/bop_mujoco_obj4/tless --mask-opening-kernel 1 \
+  --output-dir src/lzt_cad_grasp_ros/outputs/pose_gating/tless_000004_mujoco_gtmask
+python3 src/lzt_cad_grasp_ros/scripts/refine_foundpose_poses.py \
+  --input src/lzt_cad_grasp_ros/outputs/pose_gating/tless_000004_mujoco_gtmask/gated-poses.json \
+  --object-config src/lzt_cad_grasp_ros/config/objects/tless_000004.yaml \
+  --detections datasets/bop_mujoco_obj4/gt-mask-detections.json \
+  --dataset-root datasets/bop_mujoco_obj4/tless --reweight-score \
+  --output-dir src/lzt_cad_grasp_ros/outputs/pose_refinement/tless_000004_mujoco_gtmask
+python3 src/lzt_cad_grasp_ros/scripts/convert_foundpose_topk.py \
+  --input src/lzt_cad_grasp_ros/outputs/pose_refinement/tless_000004_mujoco_gtmask/refined-poses.json \
+  --object-config src/lzt_cad_grasp_ros/config/objects/tless_000004.yaml \
+  --output src/lzt_cad_grasp_ros/outputs/pose_refinement/tless_000004_mujoco_gtmask/pose-hypotheses-refined.json
+
+# 4. 用预测位姿实际执行抓取、搬运和放置
+MUJOCO_GL=egl python3 src/lzt_cad_grasp_ros/scripts/run_industrial_cad_pick_place.py \
+  --image-width 720 --image-height 540 \
+  --pose-hypotheses src/lzt_cad_grasp_ros/outputs/pose_refinement/tless_000004_mujoco_gtmask/pose-hypotheses-refined.json \
+  --run-id predicted_debug --seed 0
+```
+
+第一次同源单图结果中，原始置信度最高候选 MSSD 为 41.84 mm；RGB-D 门控拒绝
+2/5 个候选并把 11.93 mm 候选排到首位。直接执行门控结果完成抓放但放置误差
+6.49 mm，未过 5 mm 阈值；局部修正后首选预测平移误差降至 3.00 mm，动态闭环
+最终三维放置误差为 2.63 mm。该单次结果证明接口闭环可用，尚不能代表统计提升。
+固定种子后的版本化运行可能得到不同 Top-K 代表姿态并暴露抓放失败，因此基线判据
+以保存完整成功/失败样本为准，不把单次成功写成算法性能结论。完整定义见
+`docs/SYSTEM_BASELINE_V1.md`。
 
 ## 构建与检查
 
@@ -335,7 +457,8 @@ ros2 run lzt_cad_grasp_ros cad_grasp_exploration_node
 2. 用对象 8–10 冻结集验证 RGB-D mask 修正，另行运行改进 mask 下的 FoundPose；
 3. 将通过审计的 Top-K 门控扩展到对象 5–10，并形成 Best-1/原始 Top-K/门控
    Top-K 对照；
-4. 将目标工业 CAD 作为碰撞体导入 MuJoCo，并执行预测位姿驱动的完整上下料；
+4. 将同源 FoundPose 预测闭环扩展为随机初始位置/姿态的批量重复实验，并统计
+   原始、门控及修正位姿的抓放成功率；首次预测闭环已经通过；
 5. 实机手眼标定后替换仿真外参，验证真实工作空间、IK 和碰撞检查；
 6. 扩展 ROBI 与多工业 CAD 实验，再决定何时恢复对象 20–30 的标准模板任务。
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import random
 import runpy
 import sys
 
@@ -47,6 +48,20 @@ def main() -> None:
         foundpose_root / "external" / "dinov2",
     ]
     sys.path[:0] = [str(path) for path in python_paths]
+
+    seed = int(os.environ.get("LZT_RANDOM_SEED", "0"))
+    random.seed(seed)
+    import cv2
+    import numpy as np
+    import torch
+
+    cv2.setRNGSeed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
 
     os.environ["BOP_PATH"] = str(bop_root)
     os.environ.setdefault("XFORMERS_DISABLED", "1")

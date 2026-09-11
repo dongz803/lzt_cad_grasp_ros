@@ -16,6 +16,7 @@ def test_all_baseline_scenes_load_independently() -> None:
         "baseline_vision_single.xml",
         "baseline_vision_ten.xml",
         "exploration_workcell.xml",
+        "industrial_cad_single.xml",
     ):
         model = mujoco.MjModel.from_xml_path(str(scene_path(scene_name)))
         assert model.nbody > 1
