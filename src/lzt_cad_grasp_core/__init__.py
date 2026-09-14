@@ -24,8 +24,10 @@ from .task_grasp import (
     RankedTaskGrasp,
     RobustScoringConfig,
     rank_task_grasps,
+    weighted_cvar,
 )
 from .topk_evaluation import (
+    aggregate_bop_image_runtimes,
     common_coverage_comparison,
     fixed_denominator_metric,
     load_target_counts,
@@ -66,6 +68,13 @@ from .pose_refinement import (
     PoseRefinementResult,
     evaluate_pose_alignment,
     refine_pose_rgbd,
+)
+from .pose_reliability import (
+    FEATURE_NAMES as POSE_RELIABILITY_FEATURE_NAMES,
+    PoseReliabilityModel,
+    binary_probability_metrics,
+    fit_pose_reliability_model,
+    pose_reliability_features,
 )
 from .robot_frames import (
     RobotCameraCalibration,
@@ -132,6 +141,8 @@ __all__ = [
     "RankedTaskGrasp",
     "RobustScoringConfig",
     "rank_task_grasps",
+    "weighted_cvar",
+    "aggregate_bop_image_runtimes",
     "common_coverage_comparison",
     "fixed_denominator_metric",
     "load_target_counts",
@@ -165,6 +176,11 @@ __all__ = [
     "PoseRefinementResult",
     "evaluate_pose_alignment",
     "refine_pose_rgbd",
+    "POSE_RELIABILITY_FEATURE_NAMES",
+    "PoseReliabilityModel",
+    "binary_probability_metrics",
+    "fit_pose_reliability_model",
+    "pose_reliability_features",
     "CollisionCheckResult",
     "IKSolution",
     "MujocoUR5eConstraintEvaluator",

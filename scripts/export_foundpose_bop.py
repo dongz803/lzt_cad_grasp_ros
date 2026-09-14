@@ -5,12 +5,20 @@ from __future__ import annotations
 
 import argparse
 import csv
-from collections import defaultdict
 import json
 from pathlib import Path
+import sys
 from typing import Any
 
 import numpy as np
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from lzt_cad_grasp_core.topk_evaluation import (  # noqa: E402
+    aggregate_bop_image_runtimes,
+)
 
 
 def _load_json(path: Path) -> Any:
@@ -48,17 +56,7 @@ def main() -> None:
     if missing and not args.allow_missing:
         raise SystemExit(f"missing object results: {missing}")
 
-    detection_time: dict[tuple[int, int], float] = {}
-    algorithm_time: defaultdict[tuple[int, int], float] = defaultdict(float)
-    for record in records:
-        image_key = (int(record["scene_id"]), int(record["img_id"]))
-        detection_time[image_key] = max(
-            detection_time.get(image_key, 0.0),
-            float(record.get("cnos_time", 0.0)),
-        )
-        algorithm_time[image_key] += sum(
-            float(value) for value in record.get("time", {}).values()
-        )
+    image_runtime = aggregate_bop_image_runtimes(records)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", encoding="utf-8", newline="") as stream:
@@ -76,7 +74,7 @@ def main() -> None:
                     record["score"],
                     " ".join(map(str, rotation.tolist())),
                     " ".join(map(str, translation.tolist())),
-                    algorithm_time[image_key] + detection_time.get(image_key, 0.0),
+                    image_runtime[image_key],
                 ]
             )
     print(

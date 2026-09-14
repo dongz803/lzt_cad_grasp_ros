@@ -19,6 +19,7 @@ import numpy as np
 
 TargetKey = tuple[int, int, int]
 InstanceKey = tuple[int, int, int, int]
+ImageKey = tuple[int, int]
 
 
 def load_target_counts(
@@ -380,20 +381,57 @@ def common_coverage_comparison(
     }
 
 
-def write_bop_csv(records: Sequence[dict[str, Any]], path: Path) -> None:
-    """Export selected policy outputs for the official BOP evaluator."""
+def aggregate_bop_image_runtimes(
+    records: Sequence[Mapping[str, Any]],
+) -> dict[ImageKey, float]:
+    """Aggregate FoundPose runtime once per instance for each BOP image.
 
-    detection_time: dict[tuple[int, int], float] = {}
-    algorithm_time: dict[tuple[int, int], float] = defaultdict(float)
+    FoundPose stores the complete instance-level runtime dictionary on every
+    Top-K hypothesis.  Summing every record would therefore multiply the
+    runtime by the number of hypotheses.  Different detected instances in the
+    same image are still additive, while the shared detection time is counted
+    only once per image.
+    """
+
+    detection_time: dict[ImageKey, float] = {}
+    instance_time: dict[InstanceKey, float] = {}
     for record in records:
-        image_key = (int(record["scene_id"]), int(record.get("img_id", record.get("im_id"))))
+        image_key = (
+            int(record["scene_id"]),
+            int(record.get("img_id", record.get("im_id"))),
+        )
+        if "inst_id" not in record:
+            raise ValueError(
+                "FoundPose records require inst_id for Top-K runtime aggregation"
+            )
+        instance_key = (*image_key, int(record["obj_id"]), int(record["inst_id"]))
         detection_time[image_key] = max(
             detection_time.get(image_key, 0.0),
             float(record.get("cnos_time", 0.0)),
         )
-        algorithm_time[image_key] += sum(
-            float(value) for value in record.get("time", {}).values()
-        )
+        runtime = sum(float(value) for value in record.get("time", {}).values())
+        previous = instance_time.get(instance_key)
+        if previous is not None and not np.isclose(
+            runtime, previous, rtol=1e-9, atol=1e-12
+        ):
+            raise ValueError(
+                "inconsistent runtime across hypotheses for instance "
+                f"{instance_key}: {previous} != {runtime}"
+            )
+        instance_time[instance_key] = runtime
+
+    image_runtime: dict[ImageKey, float] = defaultdict(float)
+    for instance_key, runtime in instance_time.items():
+        image_runtime[instance_key[:2]] += runtime
+    for image_key, runtime in detection_time.items():
+        image_runtime[image_key] += runtime
+    return dict(image_runtime)
+
+
+def write_bop_csv(records: Sequence[dict[str, Any]], path: Path) -> None:
+    """Export selected policy outputs for the official BOP evaluator."""
+
+    image_runtime = aggregate_bop_image_runtimes(records)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as stream:
@@ -414,6 +452,6 @@ def write_bop_csv(records: Sequence[dict[str, Any]], path: Path) -> None:
                     float(record.get("score", 0.0)),
                     " ".join(map(str, rotation.tolist())),
                     " ".join(map(str, translation.tolist())),
-                    algorithm_time[image_key] + detection_time.get(image_key, 0.0),
+                    image_runtime[image_key],
                 ]
             )

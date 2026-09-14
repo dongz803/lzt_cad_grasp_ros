@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "method": "l2_logistic_regression",
+  "feature_names": [
+    "pnp_score",
+    "log1p_pnp_inliers",
+    "positive_model_fraction",
+    "projected_model_fraction",
+    "silhouette_iou",
+    "silhouette_boundary_f1",
+    "absolute_log_area_ratio",
+    "center_error_over_mask_scale",
+    "reprojection_error_over_mask_scale",
+    "depth_overlap_fraction",
+    "depth_error_over_cad_scale",
+    "depth_inlier_fraction",
+    "relative_pnp_score",
+    "relative_geometric_quality",
+    "accepted_group_fraction",
+    "group_score_entropy"
+  ],
+  "feature_mean": [
+    0.24002329483487647,
+    3.757791030269155,
+    1.0,
+    1.0,
+    0.7133396927010092,
+    0.5436214036874726,
+    0.18897409482310662,
+    0.0918414143963332,
+    0.06553070378935734,
+    0.8094620765852105,
+    0.1486597509293248,
+    0.7084822650414123,
+    0.8724499617453203,
+    0.9095377300091944,
+    0.6855823499230279,
+    0.7138409479307719
+  ],
+  "feature_scale": [
+    0.06314738682537907,
+    0.2731074699672911,
+    1.0,
+    1.0,
+    0.16717309871793606,
+    0.1890958718873958,
+    0.1807288067842156,
+    0.08521358571933355,
+    0.044216805068283994,
+    0.17549519292251253,
+    0.07921573586170726,
+    0.20690130712241356,
+    0.11342120454039656,
+    0.11657062556061137,
+    0.22355500771399886,
+    0.2497773452711754
+  ],
+  "coefficients": [
+    0.5647196057340578,
+    0.01971078413464096,
+    0.0,
+    0.0,
+    0.08378907605159461,
+    0.8334726088602156,
+    0.02886241678670784,
+    -0.4094535132533403,
+    0.7277061462715191,
+    0.07544754135842634,
+    -3.492921219838537,
+    -1.5540292153167397,
+    -0.08236533468854586,
+    2.294526231177216,
+    0.3496851154383769,
+    -0.32648536568936615
+  ],
+  "intercept": -4.711416384680272,
+  "label": {
+    "name": "mssd_normalized_within_threshold",
+    "threshold": 0.1,
+    "ground_truth_used_at_runtime": false
+  },
+  "training": {
+    "protocol": "leave_one_cad_object_out_then_refit_all",
+    "source_audits": [
+      {
+        "audit": "outputs/pose_gating/tless_000002/audit.json",
+        "object_id": 2,
+        "raw_group_count": 203,
+        "bop_target_instance_count": 441,
+        "cad_scale_m": 0.08692031075163043
+      },
+      {
+        "audit": "outputs/pose_gating/tless_000003/audit.json",
+        "object_id": 3,
+        "raw_group_count": 304,
+        "bop_target_instance_count": 384,
+        "cad_scale_m": 0.09146397932459532
+      },
+      {
+        "audit": "outputs/pose_gating/tless_000004/audit.json",
+        "object_id": 4,
+        "raw_group_count": 270,
+        "bop_target_instance_count": 594,
+        "cad_scale_m": 0.09634579503538283
+      }
+    ],
+    "sample_count": 1949,
+    "observed_raw_pose_groups": 777,
+    "fixed_bop_target_instances": 1419,
+    "object_ids": [2, 3, 4],
+    "positive_fraction": 0.15135967162647512,
+    "l2_regularization": 1.0,
+    "balance_classes": false
+  }
+}

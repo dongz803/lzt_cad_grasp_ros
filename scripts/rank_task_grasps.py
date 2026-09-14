@@ -115,6 +115,15 @@ def main() -> None:
     parser.add_argument("--pick-position-tolerance-m", type=float, default=0.01)
     parser.add_argument("--pick-angle-tolerance-deg", type=float, default=10.0)
     parser.add_argument("--risk-sigma", type=float, default=2.0)
+    parser.add_argument(
+        "--grasp-ranking", choices=("baseline", "cvar"), default="baseline"
+    )
+    parser.add_argument("--cvar-tail-probability", type=float, default=0.25)
+    parser.add_argument("--cvar-risk-weight", type=float, default=0.5)
+    parser.add_argument(
+        "--confidence-is-calibrated-probability", action="store_true"
+    )
+    parser.add_argument("--grasp-focus", action="store_true")
     parser.add_argument("--robot-camera-calibration", type=Path)
     parser.add_argument("--use-mujoco-constraints", action="store_true")
     parser.add_argument("--scene-name", default="exploration_workcell.xml")
@@ -153,6 +162,14 @@ def main() -> None:
         pick_position_tolerance_m=args.pick_position_tolerance_m,
         pick_angle_tolerance_deg=args.pick_angle_tolerance_deg,
         risk_sigma=args.risk_sigma,
+        cvar_tail_probability=args.cvar_tail_probability,
+        cvar_risk_weight=(
+            args.cvar_risk_weight if args.grasp_ranking == "cvar" else 0.0
+        ),
+        include_place_uncertainty=not args.grasp_focus,
+        confidence_is_calibrated_probability=(
+            args.confidence_is_calibrated_probability
+        ),
     )
     calibration = (
         None
@@ -225,6 +242,13 @@ def main() -> None:
         "instance_id": pose_set.instance_id,
         "uncertainty_method": pose_set.uncertainty_method,
         "risk_sigma": scoring.risk_sigma,
+        "grasp_ranking": args.grasp_ranking,
+        "cvar_tail_probability": scoring.cvar_tail_probability,
+        "cvar_risk_weight": scoring.cvar_risk_weight,
+        "confidence_is_calibrated_probability": (
+            scoring.confidence_is_calibrated_probability
+        ),
+        "include_place_uncertainty": scoring.include_place_uncertainty,
         "output_frame": (
             "unconfigured_identity"
             if calibration is None
@@ -243,6 +267,7 @@ def main() -> None:
                 "rank": index + 1,
                 "grasp_id": item.candidate.grasp_id,
                 "robust_score": item.robust_score,
+                "pose_set_reliability": item.pose_set_reliability,
                 "analytic_quality": item.candidate.analytic_quality,
                 "antipodal_score": item.candidate.antipodal_score,
                 "center_of_mass_offset_m": item.candidate.center_of_mass_offset_m,
@@ -250,6 +275,9 @@ def main() -> None:
                 "opening_margin_m": item.candidate.opening_margin_m,
                 "finger_collision_free": item.candidate.finger_collision_free,
                 "feasible_confidence_mass": item.feasible_confidence_mass,
+                "expected_task_success": item.expected_task_success,
+                "tail_task_success": item.tail_task_success,
+                "cvar_failure_risk": item.cvar_failure_risk,
                 "uncertainty_success": item.uncertainty_success,
                 "travel_score": item.travel_score,
                 "pick_position_std_m": item.pick_position_std_m,

@@ -1,4 +1,5 @@
 from pathlib import Path
+import csv
 import sys
 
 import numpy as np
@@ -8,11 +9,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from lzt_cad_grasp_core.topk_evaluation import (  # noqa: E402
+    aggregate_bop_image_runtimes,
     common_coverage_comparison,
     load_target_counts,
     oracle_topk_summary,
     select_policy_predictions,
     summarize_selected_predictions,
+    write_bop_csv,
 )
 
 
@@ -125,3 +128,58 @@ def test_equal_coverage_uses_same_number_of_predictions() -> None:
     assert comparison["points"][0]["methods"]["gated"][
         "selective_risk_mssd"
     ] == 0.0
+
+
+def timed_pose(
+    image_id: int,
+    instance_id: int,
+    hypothesis_id: int,
+    runtime: dict[str, float],
+    detection_time: float,
+) -> dict:
+    record = pose(image_id, instance_id, hypothesis_id, 0.9, 0.1, 10.0)
+    record["time"] = runtime
+    record["cnos_time"] = detection_time
+    return record
+
+
+def test_bop_runtime_counts_topk_instance_time_once() -> None:
+    records = [
+        timed_pose(1, 0, 0, {"prep": 1.0, "pnp": 0.5}, 0.25),
+        timed_pose(1, 0, 1, {"prep": 1.0, "pnp": 0.5}, 0.25),
+        timed_pose(1, 0, 2, {"prep": 1.0, "pnp": 0.5}, 0.25),
+        timed_pose(1, 1, 0, {"prep": 2.0}, 0.25),
+        timed_pose(2, 0, 0, {"prep": 0.75}, 0.10),
+    ]
+
+    runtimes = aggregate_bop_image_runtimes(records)
+
+    assert runtimes == {(1, 1): 3.75, (1, 2): 0.85}
+
+
+def test_write_bop_csv_uses_same_deduplicated_runtime_per_image(
+    tmp_path: Path,
+) -> None:
+    records = [
+        timed_pose(1, 0, 0, {"prep": 1.0}, 0.25),
+        timed_pose(1, 0, 1, {"prep": 1.0}, 0.25),
+        timed_pose(1, 1, 0, {"prep": 2.0}, 0.25),
+    ]
+    output = tmp_path / "topk.csv"
+
+    write_bop_csv(records, output)
+
+    with output.open("r", encoding="utf-8", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    assert len(rows) == 3
+    assert [float(row["time"]) for row in rows] == [3.25, 3.25, 3.25]
+
+
+def test_bop_runtime_rejects_inconsistent_hypothesis_times() -> None:
+    records = [
+        timed_pose(1, 0, 0, {"prep": 1.0}, 0.25),
+        timed_pose(1, 0, 1, {"prep": 2.0}, 0.25),
+    ]
+
+    with np.testing.assert_raises_regex(ValueError, "inconsistent runtime"):
+        aggregate_bop_image_runtimes(records)

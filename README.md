@@ -318,6 +318,8 @@ outputs/task_grasps/tless_00000<对象号>_topk_set0.json
 - `scenes/exploration_workcell.xml`：原完整上下料工作台场景。
 - `scenes/industrial_cad_single.xml`：工业 CAD 动态注入场景；不再把铜柱固定写在 XML，
   由执行脚本按物料 YAML 选择 CAD。
+- `scenes/industrial_cad_grasp_focus.xml`：抓取优先场景；保留相同机器人、相机、
+  工作台和上料区，但把 6 个铜柱圆形点位改为一个通用工业物料矩形下料区。
 
 这些文件是新路线的初始环境副本。后续修改新场景不会影响传统基线包。
 
@@ -364,6 +366,29 @@ outputs/industrial_cad_pick_place/tless_000004/
 - `plan.json`：所选 CAD 抓取、7 个关节路点、IK 与碰撞审计；
 - `00_home.png` 至 `08_retreated.png`、`pick_place.gif`：执行过程；
 - `result.json`：抬升、放置误差、稳定性、禁止接触和最终成功判据。
+
+若当前阶段只研究抓取误差，可使用独立入口运行抓取优先场景：
+
+```bash
+cd /home/lzt/lzt_ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+# 只审核观测、抓取候选、IK 和碰撞路径
+MUJOCO_GL=egl python3 \
+  src/lzt_cad_grasp_ros/scripts/run_industrial_cad_grasp_focus.py --check-only
+
+# 执行完整抓放并保存过程图片和 GIF
+MUJOCO_GL=egl python3 \
+  src/lzt_cad_grasp_ros/scripts/run_industrial_cad_grasp_focus.py
+```
+
+该入口仍将物料送至绿色区域中心，但验收不再使用精确放置位置和姿态容差。
+成功条件为：物料被有效抬升、最终完整落在矩形区域内、稳定且无禁止碰撞。
+`result.json` 单独记录 `grasp_target_position_error_m`、
+`grasp_target_angle_error_deg` 和 `grasp_success`；原来的放置误差只作为诊断值，
+并通过 `placement_pose_error_used_for_acceptance=false` 明确标记为不参与判定。
+抓取优先结果写入带 `_grasp_focus` 后缀的独立目录，不会与原精确放置结果混用。
 
 以上默认命令使用 `mujoco_ground_truth` 位姿，作用是冻结一个可回归的机械执行
 基线。完整预测闭环可用一条命令运行：
@@ -436,6 +461,64 @@ MUJOCO_GL=egl python3 src/lzt_cad_grasp_ros/scripts/run_industrial_cad_pick_plac
 以保存完整成功/失败样本为准，不把单次成功写成算法性能结论。完整定义见
 `docs/SYSTEM_BASELINE_V1.md`。
 
+## 创新点一：校准多假设与尾部风险抓取
+
+当前创新点一已形成可运行原型：先用物理硬门控删除负深度、极端工作空间及明显
+RGB-D 不一致候选，再从 PnP、CAD 轮廓、深度残差和组内一致性提取 16 维无量纲
+特征，用 L2 逻辑回归输出候选正确概率；抓取端把这些概率、Top-K 位姿、CAD 抓取
+质量、IK/碰撞和 SE(3) 不确定度联合传播，并使用期望成功与 CVaR 尾部风险排序。
+当输入是校准概率时，排序器显式保留“Top-K 全部错误”的空假设，避免归一化后被迫
+相信一个低可信候选。执行器支持按最小位姿集可靠性、最小抓取得分和最大 CVaR
+失败风险主动拒绝，并在 `result.json` 保存具体拒绝原因。
+
+冻结模型位于：
+
+```text
+config/reliability/tless_objects2_4_logistic_v2.json
+```
+
+该模型仅使用 T-LESS 对象 2–4 的 MSSD 作为离线训练标签；运行时不读取真值。
+留一 CAD 交叉验证共使用 1949 个硬门控后候选，ROC AUC 为 0.9009、Brier 分数
+为 0.0873、ECE 为 0.0327。BOP 共含 1419 个目标实例，其中 FoundPose 形成
+777 个原始候选组、硬门控后覆盖 672 组（47.36%）。手工 RGB-D 分数与学习概率的
+Top-1 正确数分别为 151 和 205，即固定目标分母成功率从 10.64% 提高到 14.45%；该
+结果只证明对象 2–4 的离线候选排序提升，不代表跨数据域或动态抓取成功率提升。
+
+重新训练和评估：
+
+```bash
+cd /home/lzt/lzt_ros2_ws/src/lzt_cad_grasp_ros
+python3 scripts/train_pose_reliability.py \
+  --audits outputs/pose_gating/tless_000002/audit.json \
+           outputs/pose_gating/tless_000003/audit.json \
+           outputs/pose_gating/tless_000004/audit.json \
+  --output-dir outputs/pose_reliability/my_run
+```
+
+运行一次完整创新流程：
+
+```bash
+MUJOCO_GL=egl python3 scripts/run_tless_obj4_pipeline.py \
+  --run-id innovation1_demo --seed 0 --grasp-focus \
+  --reliability-model config/reliability/tless_objects2_4_logistic_v2.json \
+  --grasp-ranking cvar --cvar-tail-probability 0.25 --cvar-risk-weight 0.5
+```
+
+运行严格配对消融（基线和创新方法使用相同随机条件，创新分支复用基线的同一份
+图像和 FoundPose 原始 Top-K）：
+
+```bash
+MUJOCO_GL=egl python3 scripts/run_innovation1_grasp_ablation.py \
+  --trials 20 --seed 300 \
+  --output-dir outputs/grasp_ablation/innovation1_paired_20_v1
+```
+
+当前 3 组严格配对预实验中，两种方法均为 3/3 抓取成功，成功率差为 0；样本量
+过小且对象 4 的开放抓取场景存在天花板效应。T-LESS 模型在这 3 个理想 MuJoCo
+样本上的位姿集可靠性均值仅 0.405，而抓取实际均成功，说明概率存在跨域欠校准。
+因此正式论文实验还必须加入 MuJoCo/真实工作站校准集、失败与拒绝样本、非对称及
+离散对称 CAD，并按固定分母报告成功率、覆盖率、Wilson 区间与配对统计。
+
 ## 构建与检查
 
 ```bash
@@ -452,15 +535,15 @@ ros2 run lzt_cad_grasp_ros cad_grasp_exploration_node
 
 ## 后续实现顺序
 
-1. 对对象 2–4 全量运行 CAD/RGB-D 位姿修正，并用固定分母与官方 BOP 指标确认
+1. 用独立 MuJoCo/真实工作站校准集修正 T-LESS 概率的跨域偏差，冻结主动拒绝阈值；
+2. 对对象 2–4 全量运行 CAD/RGB-D 位姿修正，并用固定分母与官方 BOP 指标确认
    MSSD 改善是否能保持，同时处理 MSPD 权衡；
-2. 用对象 8–10 冻结集验证 RGB-D mask 修正，另行运行改进 mask 下的 FoundPose；
-3. 将通过审计的 Top-K 门控扩展到对象 5–10，并形成 Best-1/原始 Top-K/门控
+3. 用对象 8–10 冻结集验证 RGB-D mask 修正，另行运行改进 mask 下的 FoundPose；
+4. 将通过审计的 Top-K 门控扩展到对象 5–10，并形成 Best-1/原始 Top-K/门控
    Top-K 对照；
-4. 将同源 FoundPose 预测闭环扩展为随机初始位置/姿态的批量重复实验，并统计
-   原始、门控及修正位姿的抓放成功率；首次预测闭环已经通过；
-5. 实机手眼标定后替换仿真外参，验证真实工作空间、IK 和碰撞检查；
-6. 扩展 ROBI 与多工业 CAD 实验，再决定何时恢复对象 20–30 的标准模板任务。
+5. 将严格配对实验扩展到多 CAD 和每种方法至少 50 次，形成置信区间与失败分布；
+6. 实机手眼标定后替换仿真外参，验证真实工作空间、IK 和碰撞检查；
+7. 扩展 ROBI 与多工业 CAD 实验，再决定何时恢复对象 20–30 的标准模板任务。
 
 具体选择与操作边界见 `docs/FOUNDPOSE_BASELINE.md`，新增位姿修正与机器人约束链
 见 `docs/POSE_REFINEMENT_AND_ROBOT_CONSTRAINTS.md`。

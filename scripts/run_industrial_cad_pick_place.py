@@ -49,11 +49,46 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
+        "--scene-name",
+        default="industrial_cad_single.xml",
+        help="MuJoCo scene under scenes/; defaults to the precise-placement baseline",
+    )
+    parser.add_argument(
         "--slot",
-        choices=[f"place_slot_{index:02d}" for index in range(1, 7)],
+        choices=[
+            *(f"place_slot_{index:02d}" for index in range(1, 7)),
+            "place_region_center",
+        ],
         default="place_slot_02",
     )
+    parser.add_argument(
+        "--acceptance-mode",
+        choices=("precise_pose", "grasp_focus"),
+        default="precise_pose",
+        help="precise pose tolerance or grasp-focused rectangular-region acceptance",
+    )
+    parser.add_argument(
+        "--placement-region-min-xy",
+        type=float,
+        nargs=2,
+        metavar=("X_MIN", "Y_MIN"),
+        default=(-0.38, 0.09),
+    )
+    parser.add_argument(
+        "--placement-region-max-xy",
+        type=float,
+        nargs=2,
+        metavar=("X_MAX", "Y_MAX"),
+        default=(-0.02, 0.47),
+    )
     parser.add_argument("--initial-yaw-deg", type=float, default=0.0)
+    parser.add_argument(
+        "--initial-xy-m",
+        type=float,
+        nargs=2,
+        metavar=("X", "Y"),
+        default=(-0.2, -0.12),
+    )
     parser.add_argument("--lift-height-m", type=float, default=0.14)
     parser.add_argument("--image-width", type=int, default=960)
     parser.add_argument("--image-height", type=int, default=540)
@@ -75,6 +110,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-sim-pose-angle-error-deg", type=float, default=20.0
     )
+    parser.add_argument(
+        "--grasp-ranking",
+        choices=("baseline", "cvar"),
+        default="baseline",
+        help="fixed expected-score baseline or Top-K CVaR tail-risk ranking",
+    )
+    parser.add_argument("--cvar-tail-probability", type=float, default=0.25)
+    parser.add_argument("--cvar-risk-weight", type=float, default=0.5)
+    parser.add_argument("--minimum-grasp-score", type=float, default=0.0)
+    parser.add_argument(
+        "--confidence-is-calibrated-probability",
+        action="store_true",
+        help=(
+            "preserve absolute Top-K correctness probability and add an "
+            "explicit no-valid-pose failure hypothesis"
+        ),
+    )
+    parser.add_argument("--minimum-pose-set-reliability", type=float, default=0.0)
+    parser.add_argument("--maximum-cvar-failure-risk", type=float, default=1.0)
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--viewer", action="store_true")
     parser.add_argument("--realtime-factor", type=float, default=1.0)
@@ -93,7 +147,9 @@ def _safe_run_id(raw: str | None) -> str:
 def _execution_mode(args: argparse.Namespace) -> str:
     source = "gt" if args.pose_hypotheses is None else "predicted"
     phase = "check" if args.check_only else "dynamic"
-    return f"{source}_{phase}"
+    profile = "_grasp_focus" if getattr(args, "acceptance_mode", "precise_pose") == "grasp_focus" else ""
+    ranking = "_cvar" if getattr(args, "grasp_ranking", "baseline") == "cvar" else ""
+    return f"{source}_{phase}{profile}{ranking}"
 
 
 def _prepare_output_directory(
@@ -153,6 +209,7 @@ def _snapshot_run_inputs(
     inputs = {
         "object_config": args.object_config.resolve(),
         "grasp_candidates": args.grasp_candidates.resolve(),
+        "scene": (PROJECT_ROOT / "scenes" / args.scene_name).resolve(),
     }
     if args.pose_hypotheses is not None:
         inputs["pose_hypotheses"] = args.pose_hypotheses.resolve()
@@ -671,12 +728,86 @@ def _symmetry_aware_angle_deg(
     )
 
 
+def _transformed_bounds_xy(
+    transform_world_object: np.ndarray,
+    local_bounds_min_m: np.ndarray,
+    local_bounds_max_m: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the world XY bounds of all eight transformed CAD AABB corners."""
+
+    lower = np.asarray(local_bounds_min_m, dtype=np.float64)
+    upper = np.asarray(local_bounds_max_m, dtype=np.float64)
+    corners = np.asarray(
+        [
+            [x, y, z, 1.0]
+            for x in (lower[0], upper[0])
+            for y in (lower[1], upper[1])
+            for z in (lower[2], upper[2])
+        ],
+        dtype=np.float64,
+    )
+    world_xy = (transform_world_object @ corners.T).T[:, :2]
+    return np.min(world_xy, axis=0), np.max(world_xy, axis=0)
+
+
+def _object_inside_xy_region(
+    transform_world_object: np.ndarray,
+    local_bounds_min_m: np.ndarray,
+    local_bounds_max_m: np.ndarray,
+    region_min_xy: np.ndarray,
+    region_max_xy: np.ndarray,
+) -> bool:
+    """Conservatively require the transformed CAD bounds to fit in the region."""
+
+    object_min_xy, object_max_xy = _transformed_bounds_xy(
+        transform_world_object,
+        local_bounds_min_m,
+        local_bounds_max_m,
+    )
+    return bool(
+        np.all(object_min_xy >= np.asarray(region_min_xy, dtype=np.float64))
+        and np.all(object_max_xy <= np.asarray(region_max_xy, dtype=np.float64))
+    )
+
+
+def _risk_rejection_reasons(
+    robust_score: float,
+    pose_set_reliability: float,
+    cvar_failure_risk: float,
+    minimum_grasp_score: float,
+    minimum_pose_set_reliability: float,
+    maximum_cvar_failure_risk: float,
+) -> list[str]:
+    reasons = []
+    if robust_score < minimum_grasp_score:
+        reasons.append("low_robust_grasp_score")
+    if pose_set_reliability < minimum_pose_set_reliability:
+        reasons.append("low_pose_set_reliability")
+    if cvar_failure_risk > maximum_cvar_failure_risk:
+        reasons.append("high_cvar_failure_risk")
+    return reasons
+
+
 def main() -> None:
     args = parse_args()
     if args.lift_height_m <= 0.08 or args.path_samples < 2:
         raise ValueError("lift height must exceed 0.08 m and path samples >= 2")
     if args.realtime_factor <= 0.0:
         raise ValueError("realtime factor must be positive")
+    region_min_xy = np.asarray(args.placement_region_min_xy, dtype=np.float64)
+    region_max_xy = np.asarray(args.placement_region_max_xy, dtype=np.float64)
+    if np.any(region_min_xy >= region_max_xy):
+        raise ValueError("placement region minimum must be below maximum on both axes")
+    if not 0.0 < args.cvar_tail_probability <= 1.0:
+        raise ValueError("cvar tail probability must lie in (0, 1]")
+    if not 0.0 <= args.cvar_risk_weight <= 1.0:
+        raise ValueError("cvar risk weight must lie in [0, 1]")
+    if not 0.0 <= args.minimum_grasp_score <= 1.0:
+        raise ValueError("minimum grasp score must lie in [0, 1]")
+    if not 0.0 <= args.minimum_pose_set_reliability <= 1.0:
+        raise ValueError("minimum pose-set reliability must lie in [0, 1]")
+    if not 0.0 <= args.maximum_cvar_failure_risk <= 1.0:
+        raise ValueError("maximum CVaR failure risk must lie in [0, 1]")
     if args.viewer:
         os.environ.pop("MUJOCO_GL", None)
     else:
@@ -716,6 +847,7 @@ def main() -> None:
         reset_robot_home,
     )
     from lzt_cad_grasp_core.task_grasp import rank_task_grasps
+    from lzt_cad_grasp_core.task_grasp import RobustScoringConfig
 
     config = load_object_config(args.object_config)
     candidates = _load_candidates(args.grasp_candidates, config.cad_object.object_id)
@@ -730,6 +862,8 @@ def main() -> None:
     model, scene_info = build_industrial_cad_workcell(
         config,
         mesh_cache,
+        scene_name=args.scene_name,
+        initial_xy_m=tuple(args.initial_xy_m),
         initial_yaw_rad=np.deg2rad(args.initial_yaw_deg),
     )
     data = mujoco.MjData(model)
@@ -842,12 +976,23 @@ def main() -> None:
         transform_world_base,
         RobotConstraintConfig(path_samples=args.path_samples),
     )
+    scoring_config = RobustScoringConfig(
+        cvar_tail_probability=args.cvar_tail_probability,
+        cvar_risk_weight=(
+            args.cvar_risk_weight if args.grasp_ranking == "cvar" else 0.0
+        ),
+        include_place_uncertainty=args.acceptance_mode == "precise_pose",
+        confidence_is_calibrated_probability=(
+            args.confidence_is_calibrated_probability
+        ),
+    )
     ranked = rank_task_grasps(
         pose_set,
         candidates,
         task,
         calibration.transform_base_camera_cv,
         constraint_evaluator,
+        config=scoring_config,
     )
 
     selected = None
@@ -921,10 +1066,45 @@ def main() -> None:
         selected_pose_position_error <= args.max_sim_pose_position_error_m
         and selected_pose_angle_error <= args.max_sim_pose_angle_error_deg
     )
+    risk_rejection_reasons = _risk_rejection_reasons(
+        selected.robust_score,
+        selected.pose_set_reliability,
+        selected.cvar_failure_risk,
+        args.minimum_grasp_score,
+        args.minimum_pose_set_reliability,
+        args.maximum_cvar_failure_risk,
+    )
+    selected_risk_accepted = not risk_rejection_reasons
+    ground_truth_base_grasp = (
+        calibration.transform_base_camera_cv
+        @ transform_camera_object
+        @ selected.candidate.transform_object_grasp
+    )
+    grasp_target_position_error = float(
+        np.linalg.norm(
+            selected_evaluation.transform_world_grasp_pick[:3, 3]
+            - ground_truth_base_grasp[:3, 3]
+        )
+    )
+    grasp_target_angle_error = _axis_angle_deg(
+        selected_evaluation.transform_world_grasp_pick[:3, :3],
+        ground_truth_base_grasp[:3, :3],
+    )
 
     plan_payload = {
         "schema_version": 1,
         "object_id": config.cad_object.object_id,
+        "scene_name": args.scene_name,
+        "acceptance_mode": args.acceptance_mode,
+        "grasp_ranking": args.grasp_ranking,
+        "cvar_tail_probability": scoring_config.cvar_tail_probability,
+        "cvar_risk_weight": scoring_config.cvar_risk_weight,
+        "confidence_is_calibrated_probability": (
+            scoring_config.confidence_is_calibrated_probability
+        ),
+        "minimum_grasp_score": args.minimum_grasp_score,
+        "minimum_pose_set_reliability": args.minimum_pose_set_reliability,
+        "maximum_cvar_failure_risk": args.maximum_cvar_failure_risk,
         "pose_source": pose_source,
         "selected_hypothesis_id": selected_evaluation.hypothesis_id,
         "top_pose_sim_position_error_m": top_pose_position_error,
@@ -933,11 +1113,19 @@ def main() -> None:
         "selected_pose_sim_symmetry_aware_angle_error_deg": (
             selected_pose_angle_error
         ),
+        "grasp_target_position_error_m": grasp_target_position_error,
+        "grasp_target_angle_error_deg": grasp_target_angle_error,
         "prediction_safe_for_dynamic_execution": selected_prediction_safe,
         "candidate_count": len(candidates),
         "selected_grasp_id": selected.candidate.grasp_id,
         "selected_analytic_quality": selected.candidate.analytic_quality,
         "selected_robust_score": selected.robust_score,
+        "selected_pose_set_reliability": selected.pose_set_reliability,
+        "selected_expected_task_success": selected.expected_task_success,
+        "selected_tail_task_success": selected.tail_task_success,
+        "selected_cvar_failure_risk": selected.cvar_failure_risk,
+        "selected_risk_accepted": selected_risk_accepted,
+        "risk_rejection_reasons": risk_rejection_reasons,
         "jaw_opening_m": selected.candidate.jaw_opening_m,
         "gripper_close_control": _gripper_control_for_opening(
             selected.candidate.jaw_opening_m
@@ -958,8 +1146,59 @@ def main() -> None:
     )
     if args.check_only:
         check_report = {
-            "success": selected_prediction_safe,
+            "success": selected_prediction_safe and selected_risk_accepted,
             "mode": "check_only",
+            "execution_attempted": False,
+            "scene_name": args.scene_name,
+            "acceptance_mode": args.acceptance_mode,
+            "grasp_ranking": args.grasp_ranking,
+            "random_seed": args.seed,
+            "object_id": config.cad_object.object_id,
+            "selected_grasp_id": selected.candidate.grasp_id,
+            "selected_hypothesis_id": selected_evaluation.hypothesis_id,
+            "pose_source": pose_source,
+            "top_pose_sim_position_error_m": top_pose_position_error,
+            "top_pose_sim_symmetry_aware_angle_error_deg": top_pose_angle_error,
+            "selected_pose_sim_position_error_m": selected_pose_position_error,
+            "selected_pose_sim_symmetry_aware_angle_error_deg": (
+                selected_pose_angle_error
+            ),
+            "grasp_target_position_error_m": grasp_target_position_error,
+            "grasp_target_angle_error_deg": grasp_target_angle_error,
+            "prediction_safe_for_dynamic_execution": selected_prediction_safe,
+            "selected_robust_score": selected.robust_score,
+            "selected_pose_set_reliability": selected.pose_set_reliability,
+            "selected_expected_task_success": selected.expected_task_success,
+            "selected_tail_task_success": selected.tail_task_success,
+            "selected_cvar_failure_risk": selected.cvar_failure_risk,
+            "selected_risk_accepted": selected_risk_accepted,
+            "risk_rejection_reasons": risk_rejection_reasons,
+            "observation": observation,
+            "plan_file": str(args.output / "plan.json"),
+        }
+        (args.output / "result.json").write_text(
+            json.dumps(check_report, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        _complete_run_manifest(
+            run_manifest_path,
+            success=selected_prediction_safe and selected_risk_accepted,
+            result_path=args.output / "result.json",
+        )
+        print(json.dumps(check_report, indent=2, ensure_ascii=False))
+        return
+    execution_rejection_reasons = list(risk_rejection_reasons)
+    if not selected_prediction_safe:
+        execution_rejection_reasons.append("predicted_pose_exceeds_safety_gate")
+    if execution_rejection_reasons:
+        refusal_report = {
+            "schema_version": 1,
+            "success": False,
+            "mode": "dynamic_refused",
+            "execution_attempted": False,
+            "scene_name": args.scene_name,
+            "acceptance_mode": args.acceptance_mode,
+            "grasp_ranking": args.grasp_ranking,
             "random_seed": args.seed,
             "object_id": config.cad_object.object_id,
             "selected_grasp_id": selected.candidate.grasp_id,
@@ -972,25 +1211,30 @@ def main() -> None:
                 selected_pose_angle_error
             ),
             "prediction_safe_for_dynamic_execution": selected_prediction_safe,
+            "selected_robust_score": selected.robust_score,
+            "selected_pose_set_reliability": selected.pose_set_reliability,
+            "selected_expected_task_success": selected.expected_task_success,
+            "selected_tail_task_success": selected.tail_task_success,
+            "selected_cvar_failure_risk": selected.cvar_failure_risk,
+            "selected_risk_accepted": selected_risk_accepted,
+            "risk_rejection_reasons": execution_rejection_reasons,
+            "grasp_success": False,
+            "runtime_forbidden_contacts": [],
             "observation": observation,
             "plan_file": str(args.output / "plan.json"),
         }
-        (args.output / "result.json").write_text(
-            json.dumps(check_report, indent=2, ensure_ascii=False) + "\n",
+        result_path = args.output / "result.json"
+        result_path.write_text(
+            json.dumps(refusal_report, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
         _complete_run_manifest(
             run_manifest_path,
-            success=selected_prediction_safe,
-            result_path=args.output / "result.json",
+            success=False,
+            result_path=result_path,
         )
-        print(json.dumps(check_report, indent=2, ensure_ascii=False))
+        print(json.dumps(refusal_report, indent=2, ensure_ascii=False))
         return
-    if not selected_prediction_safe:
-        raise RuntimeError(
-            "predicted pose exceeds the simulation safety gate; "
-            "inspect result with --check-only before dynamic execution"
-        )
 
     renderer = mujoco.Renderer(model, height=720, width=960)
     stage_images: list[Path] = []
@@ -1086,15 +1330,39 @@ def main() -> None:
         and np.linalg.norm(target_velocity[3:]) < 0.10
     )
     lifted = maximum_object_z - before_lift_z > 0.08
-    placement_ok = bool(
+    precise_placement_ok = bool(
         position_error <= config.placement_position_tolerance_m
         and angle_error <= config.placement_angle_tolerance_deg
     )
-    success = bool(lifted and placement_ok and stable and not forbidden_contacts)
+    final_object_min_xy, final_object_max_xy = _transformed_bounds_xy(
+        final_object,
+        scene_info.local_bounds_min_m,
+        scene_info.local_bounds_max_m,
+    )
+    placement_region_ok = _object_inside_xy_region(
+        final_object,
+        scene_info.local_bounds_min_m,
+        scene_info.local_bounds_max_m,
+        region_min_xy,
+        region_max_xy,
+    )
+    placement_ok = (
+        placement_region_ok
+        if args.acceptance_mode == "grasp_focus"
+        else precise_placement_ok
+    )
+    grasp_success = bool(lifted)
+    success = bool(
+        grasp_success and placement_ok and stable and not forbidden_contacts
+    )
     report = {
         "schema_version": 1,
         "success": success,
+        "execution_attempted": True,
         "random_seed": args.seed,
+        "scene_name": args.scene_name,
+        "acceptance_mode": args.acceptance_mode,
+        "grasp_ranking": args.grasp_ranking,
         "mode": (
             "dynamic_ground_truth_pose"
             if args.pose_hypotheses is None
@@ -1110,13 +1378,32 @@ def main() -> None:
         "selected_pose_sim_symmetry_aware_angle_error_deg": (
             selected_pose_angle_error
         ),
+        "selected_robust_score": selected.robust_score,
+        "selected_pose_set_reliability": selected.pose_set_reliability,
+        "selected_expected_task_success": selected.expected_task_success,
+        "selected_tail_task_success": selected.tail_task_success,
+        "selected_cvar_failure_risk": selected.cvar_failure_risk,
+        "selected_risk_accepted": selected_risk_accepted,
+        "risk_rejection_reasons": risk_rejection_reasons,
+        "grasp_target_position_error_m": grasp_target_position_error,
+        "grasp_target_angle_error_deg": grasp_target_angle_error,
         "initial_transform_world_object": initial_object.tolist(),
         "release_transform_world_object": release_object.tolist(),
         "goal_transform_world_object": desired_world_object.tolist(),
         "final_transform_world_object": final_object.tolist(),
         "lifted": lifted,
         "lift_distance_m": maximum_object_z - before_lift_z,
+        "grasp_success": grasp_success,
         "placement_ok": placement_ok,
+        "precise_placement_ok_diagnostic": precise_placement_ok,
+        "placement_pose_error_used_for_acceptance": (
+            args.acceptance_mode == "precise_pose"
+        ),
+        "placement_region_ok": placement_region_ok,
+        "placement_region_min_xy_m": region_min_xy.tolist(),
+        "placement_region_max_xy_m": region_max_xy.tolist(),
+        "final_object_bounds_min_xy_m": final_object_min_xy.tolist(),
+        "final_object_bounds_max_xy_m": final_object_max_xy.tolist(),
         "final_xy_error_m": xy_error,
         "final_position_error_m": position_error,
         "final_angle_error_deg": angle_error,

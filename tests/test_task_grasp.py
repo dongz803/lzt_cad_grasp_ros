@@ -17,6 +17,7 @@ from lzt_cad_grasp_core.task_grasp import (  # noqa: E402
     MotionConstraintResult,
     RobustScoringConfig,
     rank_task_grasps,
+    weighted_cvar,
 )
 
 
@@ -107,3 +108,99 @@ def test_missing_uncertainty_is_not_treated_as_zero_risk() -> None:
     assert result.uncertainty_available is False
     assert result.uncertainty_success == 0.25
     assert result.pick_position_std_m is None
+
+
+def test_weighted_cvar_uses_worst_probability_tail() -> None:
+    losses = np.array([0.0, 1.0])
+    weights = np.array([0.8, 0.2])
+
+    assert np.isclose(weighted_cvar(losses, weights, 0.25), 0.8)
+    assert np.isclose(weighted_cvar(losses, weights, 1.0), 0.2)
+
+
+def test_calibrated_pose_probability_preserves_null_failure_mass() -> None:
+    result = rank_task_grasps(
+        pose_set(np.zeros((6, 6))),
+        [candidate("only", (0.0, 0.0, 0.0))],
+        task(),
+        np.eye(4),
+        config=RobustScoringConfig(
+            cvar_tail_probability=0.25,
+            confidence_is_calibrated_probability=True,
+        ),
+    )[0]
+
+    assert np.isclose(result.pose_set_reliability, 0.8)
+    assert np.isclose(result.feasible_confidence_mass, 1.0)
+    assert np.isclose(result.expected_task_success, 0.8)
+    assert np.isclose(result.cvar_failure_risk, 0.8)
+    assert np.isclose(result.tail_task_success, 0.2)
+
+
+def test_zero_calibrated_pose_probability_is_not_promoted_by_weight_fallback() -> None:
+    zero_set = PoseHypothesisSet(
+        object_id="part",
+        scene_id=1,
+        image_id=2,
+        instance_id=0,
+        hypotheses=(PoseHypothesis(transform((0.0, 0.0, 0.5)), 0.0),),
+        covariance_se3=np.zeros((6, 6)),
+    )
+    result = rank_task_grasps(
+        zero_set,
+        [candidate("only", (0.0, 0.0, 0.0))],
+        task(),
+        np.eye(4),
+        config=RobustScoringConfig(confidence_is_calibrated_probability=True),
+    )[0]
+
+    assert result.pose_set_reliability == 0.0
+    assert result.expected_task_success == 0.0
+    assert result.cvar_failure_risk == 1.0
+    assert result.robust_score == 0.0
+
+
+def test_cvar_ranking_prefers_candidate_without_tail_failure() -> None:
+    covariance = np.zeros((6, 6))
+
+    def constraints(pick, place, grasp, hypothesis):
+        del pick, place
+        if grasp.grasp_id == "high_mean_tail_failure":
+            return MotionConstraintResult(
+                pick_collision_free=hypothesis.hypothesis_id == 0
+            )
+        return MotionConstraintResult(normalized_margin=0.7)
+
+    candidates = [
+        candidate("high_mean_tail_failure", (0.0, 0.0, 0.0), 0.9),
+        candidate("lower_mean_safe_tail", (0.0, 0.0, 0.0), 0.8),
+    ]
+    legacy = rank_task_grasps(
+        pose_set(covariance),
+        candidates,
+        task(),
+        np.eye(4),
+        constraint_evaluator=constraints,
+        config=RobustScoringConfig(cvar_risk_weight=0.0),
+    )
+    risk_aware = rank_task_grasps(
+        pose_set(covariance),
+        candidates,
+        task(),
+        np.eye(4),
+        constraint_evaluator=constraints,
+        config=RobustScoringConfig(
+            cvar_tail_probability=0.25,
+            cvar_risk_weight=1.0,
+        ),
+    )
+
+    assert legacy[0].candidate.grasp_id == "high_mean_tail_failure"
+    assert risk_aware[0].candidate.grasp_id == "lower_mean_safe_tail"
+    risky = next(
+        item
+        for item in risk_aware
+        if item.candidate.grasp_id == "high_mean_tail_failure"
+    )
+    assert np.isclose(risky.cvar_failure_risk, 0.8)
+    assert np.isclose(risky.tail_task_success, 0.2)

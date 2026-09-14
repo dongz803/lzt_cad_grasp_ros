@@ -96,3 +96,29 @@ def test_dynamic_cad_workcell_restores_target_after_robot_keyframe(
     )
     assert model.nu == 7
     assert model.njnt == 17
+
+
+def test_grasp_focus_scene_uses_rectangular_region_without_circular_slots(
+    tmp_path: Path,
+) -> None:
+    mesh_path = tmp_path / "cube.ply"
+    mesh_path.write_text(CUBE_PLY, encoding="ascii")
+    model, _ = build_industrial_cad_workcell(
+        _object_config(mesh_path),
+        tmp_path / "cube.obj",
+        scene_name="industrial_cad_grasp_focus.xml",
+        placement_clearance_m=0.0,
+    )
+
+    assert model.site("place_region_center").id >= 0
+    for frame_name in (
+        "placement_frame_left",
+        "placement_frame_right",
+        "placement_frame_near",
+        "placement_frame_far",
+    ):
+        geom = model.geom(frame_name)
+        assert geom.id >= 0
+        assert model.geom_contype[geom.id] == 0
+        assert model.geom_conaffinity[geom.id] == 0
+    assert all("place_slot" not in name for name in model.names.decode().split("\0"))

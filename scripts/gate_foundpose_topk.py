@@ -7,6 +7,7 @@ import argparse
 from collections import Counter, defaultdict
 import csv
 from functools import lru_cache
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -36,6 +37,11 @@ from lzt_cad_grasp_core.pose_hypotheses import (  # noqa: E402
     foundpose_records_to_top_k,
     hypothesis_sets_to_jsonable,
 )
+from lzt_cad_grasp_core.pose_reliability import (  # noqa: E402
+    FEATURE_NAMES as RELIABILITY_FEATURE_NAMES,
+    PoseReliabilityModel,
+    pose_reliability_features,
+)
 
 
 AUDIT_COLUMNS = [
@@ -49,6 +55,7 @@ AUDIT_COLUMNS = [
     "original_score",
     "geometric_quality",
     "robust_score",
+    "calibrated_probability",
     "translation_x_m",
     "translation_y_m",
     "translation_z_m",
@@ -190,6 +197,11 @@ def main() -> None:
     parser.add_argument("--render-point-count", type=int, default=12000)
     parser.add_argument("--render-splat-radius-px", type=int, default=2)
     parser.add_argument("--limit-groups", type=int)
+    parser.add_argument(
+        "--reliability-model",
+        type=Path,
+        help="optional learned JSON model replacing heuristic soft scores",
+    )
     args = parser.parse_args()
     if (args.robot_min is None) != (args.robot_max is None):
         raise SystemExit("--robot-min and --robot-max must be provided together")
@@ -368,6 +380,62 @@ def main() -> None:
             }
         )
 
+    reliability_model = (
+        None
+        if args.reliability_model is None
+        else PoseReliabilityModel.load(args.reliability_model)
+    )
+    if reliability_model is not None:
+        cad_scale_m = float(
+            np.linalg.norm(
+                np.max(geometry.vertices_m, axis=0)
+                - np.min(geometry.vertices_m, axis=0)
+            )
+        )
+        audit_groups: dict[
+            tuple[int, int, int, int], list[dict[str, Any]]
+        ] = defaultdict(list)
+        for audit in audit_records:
+            audit_groups[
+                (
+                    int(audit["scene_id"]),
+                    int(audit["image_id"]),
+                    int(audit["object_id"]),
+                    int(audit["instance_id"]),
+                )
+            ].append(audit)
+        accepted_by_key = {
+            (
+                int(record["scene_id"]),
+                int(record["img_id"]),
+                int(record.get("obj_id", object_id or 0)),
+                int(record.get("inst_id", 0)),
+                int(record.get("hypothesis_id", 0)),
+            ): record
+            for record in accepted_records
+        }
+        for group_key, group in audit_groups.items():
+            for audit in group:
+                if not audit["accepted"]:
+                    continue
+                features = pose_reliability_features(audit, cad_scale_m, group)
+                probability = float(reliability_model.predict_proba(features))
+                feature_payload = dict(
+                    zip(RELIABILITY_FEATURE_NAMES, features.tolist())
+                )
+                audit["calibrated_probability"] = probability
+                audit["reliability_features"] = feature_payload
+                record = accepted_by_key[(*group_key, int(audit["hypothesis_id"]))]
+                record["heuristic_robust_score"] = float(record["score"])
+                record["score"] = probability
+                record["calibrated_probability"] = probability
+                record["reliability_features"] = feature_payload
+                record["source"] = "foundpose_coarse_rgbd_gated_calibrated"
+        for row, audit in zip(csv_rows, audit_records):
+            row["calibrated_probability"] = audit.get(
+                "calibrated_probability"
+            )
+
     gated_sets = foundpose_records_to_top_k(
         accepted_records,
         object_config.cad_object,
@@ -385,7 +453,11 @@ def main() -> None:
     }
     summary = {
         "schema_version": 1,
-        "method": "foundpose_topk_physical_rgbd_gate",
+        "method": (
+            "foundpose_topk_physical_rgbd_gate"
+            if reliability_model is None
+            else "foundpose_topk_physical_rgbd_gate_calibrated_reliability"
+        ),
         "input": str(args.input.resolve()),
         "detections": str(args.detections.resolve()),
         "dataset_root": str(args.dataset_root.resolve()),
@@ -403,11 +475,26 @@ def main() -> None:
         "model_points_used": len(model_points),
         "runtime_s": elapsed,
         "gate_uses_ground_truth": False,
+        "reliability_model": (
+            None
+            if args.reliability_model is None
+            else {
+                "path": str(args.reliability_model.resolve()),
+                "sha256": hashlib.sha256(
+                    args.reliability_model.read_bytes()
+                ).hexdigest(),
+                "ground_truth_used_at_runtime": False,
+            }
+        ),
         "evaluation_only": {
             "raw_score_top1": _selection_metrics(
                 raw_records, "score", len(selected_key_set)
             ),
-            "gated_robust_top1": _selection_metrics(
+            (
+                "gated_robust_top1"
+                if reliability_model is None
+                else "gated_calibrated_top1"
+            ): _selection_metrics(
                 accepted_records, "score", len(selected_key_set)
             ),
         },

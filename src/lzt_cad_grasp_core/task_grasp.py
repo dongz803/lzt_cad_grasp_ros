@@ -88,6 +88,10 @@ class RobustScoringConfig:
     quality_weight: float = 0.8
     travel_weight: float = 0.2
     missing_uncertainty_penalty: float = 0.5
+    cvar_tail_probability: float = 0.25
+    cvar_risk_weight: float = 0.0
+    include_place_uncertainty: bool = True
+    confidence_is_calibrated_probability: bool = False
 
     def __post_init__(self) -> None:
         if self.pick_position_tolerance_m <= 0.0:
@@ -106,6 +110,10 @@ class RobustScoringConfig:
             raise ValueError("score weights must sum to 1")
         if not 0.0 <= self.missing_uncertainty_penalty <= 1.0:
             raise ValueError("missing_uncertainty_penalty must lie in [0, 1]")
+        if not 0.0 < self.cvar_tail_probability <= 1.0:
+            raise ValueError("cvar_tail_probability must lie in (0, 1]")
+        if not 0.0 <= self.cvar_risk_weight <= 1.0:
+            raise ValueError("cvar_risk_weight must lie in [0, 1]")
 
 
 @dataclass(frozen=True)
@@ -123,7 +131,11 @@ class RankedTaskGrasp:
 
     candidate: GraspCandidate
     robust_score: float
+    pose_set_reliability: float
     feasible_confidence_mass: float
+    expected_task_success: float
+    tail_task_success: float
+    cvar_failure_risk: float
     uncertainty_success: float
     travel_score: float
     pick_position_std_m: float | None
@@ -142,6 +154,36 @@ def _maximum_std(covariance: np.ndarray) -> float:
 def _tolerance_score(std: float, tolerance: float, risk_sigma: float) -> float:
     normalized = risk_sigma * std / tolerance
     return float(np.exp(-0.5 * normalized * normalized))
+
+
+def weighted_cvar(
+    losses: np.ndarray,
+    weights: np.ndarray,
+    tail_probability: float,
+) -> float:
+    """Return expected loss in the worst discrete probability tail."""
+
+    values = np.asarray(losses, dtype=np.float64).reshape(-1)
+    probabilities = np.asarray(weights, dtype=np.float64).reshape(-1)
+    if len(values) == 0 or len(values) != len(probabilities):
+        raise ValueError("losses and weights must be non-empty and aligned")
+    if not np.all(np.isfinite(values)) or not np.all(np.isfinite(probabilities)):
+        raise ValueError("losses and weights must be finite")
+    if np.any(probabilities < 0.0) or np.sum(probabilities) <= 0.0:
+        raise ValueError("weights must be non-negative with positive mass")
+    if not 0.0 < tail_probability <= 1.0:
+        raise ValueError("tail_probability must lie in (0, 1]")
+    probabilities = probabilities / np.sum(probabilities)
+    order = np.argsort(-values, kind="mergesort")
+    remaining = tail_probability
+    accumulated = 0.0
+    for index in order:
+        mass = min(float(probabilities[index]), remaining)
+        accumulated += mass * float(values[index])
+        remaining -= mass
+        if remaining <= 1e-12:
+            break
+    return accumulated / tail_probability
 
 
 def _propagated_uncertainty(
@@ -224,9 +266,20 @@ def rank_task_grasps(
         [hypothesis.confidence for hypothesis in pose_set.hypotheses],
         dtype=np.float64,
     )
+    # Compute absolute reliability before the zero-sum fallback used only to
+    # obtain relative scenario weights.
+    pose_set_reliability = (
+        float(np.max(confidences))
+        if scoring.confidence_is_calibrated_probability
+        else 1.0
+    )
     if np.sum(confidences) <= 1e-12:
         confidences = np.ones_like(confidences)
     weights = confidences / np.sum(confidences)
+    # Normalized Top-K weights express only relative preference.  With
+    # calibrated correctness probabilities, preserve the absolute chance that
+    # no retained pose is reliable.  ``max`` is a conservative group proxy for
+    # strongly correlated Top-K pose events.
     covariance = pose_set.covariance_se3
     if covariance is None:
         covariance = pose_set.hypotheses[0].covariance_se3
@@ -282,7 +335,7 @@ def rank_task_grasps(
                 pose_set.hypotheses[0].transform_camera_object,
                 candidate.transform_object_grasp[:3, 3],
             )
-            scores = (
+            scores = [
                 _tolerance_score(
                     pick_position_std,
                     scoring.pick_position_tolerance_m,
@@ -293,20 +346,51 @@ def rank_task_grasps(
                     np.radians(scoring.pick_angle_tolerance_deg),
                     scoring.risk_sigma,
                 ),
-                _tolerance_score(
-                    place_position_std,
-                    task.position_tolerance_m,
-                    scoring.risk_sigma,
-                ),
-                _tolerance_score(
-                    np.radians(place_angle_std),
-                    np.radians(task.angle_tolerance_deg),
-                    scoring.risk_sigma,
-                ),
-            )
+            ]
+            if scoring.include_place_uncertainty:
+                scores.extend(
+                    [
+                        _tolerance_score(
+                            place_position_std,
+                            task.position_tolerance_m,
+                            scoring.risk_sigma,
+                        ),
+                        _tolerance_score(
+                            np.radians(place_angle_std),
+                            np.radians(task.angle_tolerance_deg),
+                            scoring.risk_sigma,
+                        ),
+                    ]
+                )
             uncertainty_success = float(np.prod(scores))
 
         feasible_mass = float(np.sum(feasibility_terms))
+        scenario_success = np.asarray(
+            [
+                evaluation.constraints.normalized_margin
+                * float(evaluation.constraints.feasible)
+                for evaluation in hypothesis_evaluations
+            ],
+            dtype=np.float64,
+        )
+        scenario_weights = weights
+        if scoring.confidence_is_calibrated_probability:
+            scenario_success = np.r_[scenario_success, 0.0]
+            scenario_weights = np.r_[
+                weights * pose_set_reliability,
+                1.0 - pose_set_reliability,
+            ]
+        expected_task_success = pose_set_reliability * feasible_mass
+        cvar_failure_risk = weighted_cvar(
+            1.0 - scenario_success,
+            scenario_weights,
+            scoring.cvar_tail_probability,
+        )
+        tail_task_success = float(np.clip(1.0 - cvar_failure_risk, 0.0, 1.0))
+        risk_adjusted_success = (
+            (1.0 - scoring.cvar_risk_weight) * expected_task_success
+            + scoring.cvar_risk_weight * tail_task_success
+        )
         travel_score = float(np.sum(travel_terms))
         preference_score = (
             scoring.quality_weight * candidate.analytic_quality
@@ -314,7 +398,7 @@ def rank_task_grasps(
         )
         robust_score = float(
             np.clip(
-                feasible_mass * uncertainty_success * preference_score,
+                risk_adjusted_success * uncertainty_success * preference_score,
                 0.0,
                 1.0,
             )
@@ -323,7 +407,11 @@ def rank_task_grasps(
             RankedTaskGrasp(
                 candidate=candidate,
                 robust_score=robust_score,
+                pose_set_reliability=pose_set_reliability,
                 feasible_confidence_mass=feasible_mass,
+                expected_task_success=expected_task_success,
+                tail_task_success=tail_task_success,
+                cvar_failure_risk=cvar_failure_risk,
                 uncertainty_success=uncertainty_success,
                 travel_score=travel_score,
                 pick_position_std_m=pick_position_std,

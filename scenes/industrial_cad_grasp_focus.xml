@@ -1,0 +1,105 @@
+<mujoco model="lzt_industrial_cad_grasp_focus_workcell">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast"
+          cone="elliptic" impratio="10"/>
+
+  <visual>
+    <global offwidth="960" offheight="720"/>
+    <map znear="0.01" zfar="3.0"/>
+    <quality shadowsize="4096"/>
+  </visual>
+
+  <statistic center="-0.32 0 0.45" extent="1.2"/>
+
+  <default>
+    <geom friction="1.0 0.03 0.003" condim="4" solref="0.02 1"/>
+  </default>
+
+  <asset>
+    <texture name="floor_tex" type="2d" builtin="checker"
+             rgb1="0.20 0.22 0.24" rgb2="0.32 0.34 0.36"
+             width="512" height="512"/>
+    <material name="floor_mat" texture="floor_tex" texrepeat="4 4"
+              reflectance="0.05"/>
+    <material name="platform_mat" rgba="0.24 0.27 0.30 1"
+              specular="0.15" shininess="0.2" reflectance="0.03"/>
+    <material name="loading_zone_mat" rgba="0.10 0.32 0.68 0.82"
+              specular="0.05" shininess="0.1"/>
+    <material name="unloading_zone_mat" rgba="0.12 0.52 0.30 0.82"
+              specular="0.05" shininess="0.1"/>
+    <material name="separator_mat" rgba="0.95 0.78 0.12 1"/>
+    <material name="placement_frame_mat" rgba="1.00 0.86 0.18 1"/>
+    <material name="camera_body_mat" rgba="0.10 0.11 0.12 1"
+              specular="0.25" shininess="0.35"/>
+    <material name="camera_lens_mat" rgba="0.03 0.06 0.08 1"
+              specular="0.75" shininess="0.9"/>
+  </asset>
+
+  <worldbody>
+    <light name="key_light" pos="-0.35 -0.30 0.85" dir="0.35 0.30 -0.85"
+           diffuse="0.90 0.86 0.80" specular="0.75 0.70 0.65"
+           castshadow="true"/>
+    <light name="fill_light" pos="0.45 0.10 0.55" dir="-0.45 -0.10 -0.55"
+           diffuse="0.35 0.40 0.48" specular="0.20 0.22 0.25"
+           castshadow="false"/>
+
+    <geom name="floor" type="plane" size="1.5 1.5 0.05"
+          material="floor_mat"/>
+
+    <body name="platform" pos="-0.2 0.0 0.4">
+      <geom name="platform_geom" type="box" size="0.19 0.5 0.025"
+            material="platform_mat"/>
+    </body>
+
+    <!--
+      工作台和上料端与原工业 CAD 场景保持一致。绿色区域用于抓取优先
+      实验中的宽松下料，不再包含面向铜柱尺寸的圆形精确点位。
+    -->
+    <geom name="loading_zone_geom" type="box" pos="-0.2 -0.22 0.4257"
+          size="0.18 0.24 0.0007" material="loading_zone_mat"
+          contype="0" conaffinity="0" group="2"/>
+    <geom name="unloading_zone_geom" type="box" pos="-0.2 0.28 0.4257"
+          size="0.18 0.19 0.0007" material="unloading_zone_mat"
+          contype="0" conaffinity="0" group="2"/>
+    <geom name="zone_separator_geom" type="box" pos="-0.2 0.055 0.4260"
+          size="0.18 0.006 0.0010" material="separator_mat"
+          contype="0" conaffinity="0" group="2"/>
+
+    <!-- 上料点位于蓝色区域内，目标初始为横放，不显示点位标记。 -->
+    <site name="loading_spawn" type="cylinder" pos="-0.2 -0.12 0.4272"
+          size="0.025 0.0012" rgba="0.20 0.72 1.00 0" group="4"/>
+
+    <!--
+      黄色线仅标示允许下料的矩形边界，完全不参与碰撞。区域边界为
+      x=[-0.38, -0.02] m、y=[0.09, 0.47] m。
+    -->
+    <geom name="placement_frame_left" type="box" pos="-0.376 0.28 0.4272"
+          size="0.004 0.19 0.0008" material="placement_frame_mat"
+          contype="0" conaffinity="0" group="2"/>
+    <geom name="placement_frame_right" type="box" pos="-0.024 0.28 0.4272"
+          size="0.004 0.19 0.0008" material="placement_frame_mat"
+          contype="0" conaffinity="0" group="2"/>
+    <geom name="placement_frame_near" type="box" pos="-0.2 0.094 0.4272"
+          size="0.18 0.004 0.0008" material="placement_frame_mat"
+          contype="0" conaffinity="0" group="2"/>
+    <geom name="placement_frame_far" type="box" pos="-0.2 0.466 0.4272"
+          size="0.18 0.004 0.0008" material="placement_frame_mat"
+          contype="0" conaffinity="0" group="2"/>
+    <site name="place_region_center" pos="-0.2 0.28 0.4272"
+          size="0.001" rgba="0 0 0 0" group="4"/>
+
+    <!-- 目标工业 CAD 由运行脚本按物料配置动态注入。 -->
+
+    <body name="vision_sensor" pos="0 -0.76926867 0.75834976"
+          xyaxes="1 0 0 0 0.39760744 0.91755563">
+      <geom name="vision_sensor_housing" type="box" size="0.045 0.012 0.015"
+            material="camera_body_mat" contype="0" conaffinity="0" group="2"/>
+      <geom name="vision_sensor_lens" type="cylinder" pos="0 0 -0.017"
+            size="0.008 0.003" material="camera_lens_mat"
+            contype="0" conaffinity="0" group="2"/>
+      <site name="vision_camera_frame" pos="0 0 -0.021" size="0.004"
+            rgba="0.15 0.65 1 0.5" group="4"/>
+      <camera name="vision_camera" pos="0 0 -0.021" fovy="44"/>
+    </body>
+  </worldbody>
+</mujoco>
