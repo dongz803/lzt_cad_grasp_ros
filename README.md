@@ -498,15 +498,17 @@ MUJOCO_GL=egl python3 src/lzt_cad_grasp_ros/scripts/pipeline/run_industrial_cad_
 以保存完整成功/失败样本为准，不把单次成功写成算法性能结论。完整定义见
 `docs/SYSTEM_BASELINE_V1.md`。
 
-## 创新点一：校准多假设与尾部风险抓取
+## 创新点一：面向对称工业物料的校准多假设 6D 位姿感知与模式级精修
 
-当前创新点一已形成可运行原型：先用物理硬门控删除负深度、极端工作空间及明显
+当前创新点一已形成感知原型：先用物理硬门控删除负深度、极端工作空间及明显
 RGB-D 不一致候选，再从 PnP、CAD 轮廓、深度残差和组内一致性提取 16 维无量纲
-特征，用 L2 逻辑回归输出候选正确概率；抓取端把这些概率、Top-K 位姿、CAD 抓取
-质量、IK/碰撞和 SE(3) 不确定度联合传播，并使用期望成功与 CVaR 尾部风险排序。
-当输入是校准概率时，排序器显式保留“Top-K 全部错误”的空假设，避免归一化后被迫
-相信一个低可信候选。执行器支持按最小位姿集可靠性、最小抓取得分和最大 CVaR
-失败风险主动拒绝，并在 `result.json` 保存具体拒绝原因。
+特征，用 L2 逻辑回归输出候选正确概率；随后按 CAD 对称先验将 Top-K 聚类为多个非等价
+位姿模式，对模式中心执行 RGB-D/CAD 精修、修正传播、重审核和重校准。其目标输出是
+“多个非等价物体位姿模式 + 模式概率 + 模式内 SE(3) 不确定度”，而不是抓取位姿。
+
+下游已实现创新点二的基础原型：将校准概率、Top-K 位姿、CAD 抓取质量、IK/碰撞和
+SE(3) 不确定度用于期望成功和 CVaR 尾部风险排序，并支持主动拒绝。模式级协方差的直接传播和
+显式任务等价性消歧尚未完成。CAD 抓取候选生成、IK 和碰撞检查作为基础能力，不单独宣称创新。
 
 冻结模型位于：
 
@@ -532,7 +534,7 @@ python3 scripts/perception/train_pose_reliability.py \
   --output-dir outputs/pose_reliability/my_run
 ```
 
-运行一次完整创新流程：
+运行一次兼容性端到端流程（脚本中的 `innovation1` 为历史命名）：
 
 ```bash
 MUJOCO_GL=egl python3 scripts/pipeline/run_tless_obj4_pipeline.py \
@@ -541,8 +543,8 @@ MUJOCO_GL=egl python3 scripts/pipeline/run_tless_obj4_pipeline.py \
   --grasp-ranking cvar --cvar-tail-probability 0.25 --cvar-risk-weight 0.5
 ```
 
-运行严格配对消融（基线和创新方法使用相同随机条件，创新分支复用基线的同一份
-图像和 FoundPose 原始 Top-K）：
+运行现有风险决策原型的严格配对消融（脚本名保留历史 `innovation1` 标识；基线和方法分支
+使用相同随机条件，并复用同一份图像和 FoundPose 原始 Top-K）：
 
 ```bash
 MUJOCO_GL=egl python3 scripts/evaluation/run_innovation1_grasp_ablation.py \
