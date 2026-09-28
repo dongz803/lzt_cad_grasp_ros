@@ -8,7 +8,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from lzt_cad_grasp_core.pose_reliability import (  # noqa: E402
+from lzt_perception.pose_reliability import (  # noqa: E402
     FEATURE_NAMES,
     PoseReliabilityModel,
     binary_probability_metrics,
@@ -85,7 +85,7 @@ def test_probability_metrics_reward_calibrated_separation() -> None:
 def test_frozen_cross_cad_model_is_loadable_without_outputs() -> None:
     path = (
         PROJECT_ROOT
-        / "config/reliability/tless_objects2_4_logistic_v2.json"
+        / "lzt_perception/config/reliability/tless_objects2_4_logistic_v2.json"
     )
     model = PoseReliabilityModel.load(path)
     payload = json.loads(path.read_text(encoding="utf-8"))

@@ -34,14 +34,14 @@ Tube Fitting=5、DIN Connector=6、D-Sub Connector=7。转换同时保存
 cd /home/lzt/lzt_ros2_ws/src/lzt_cad_grasp_ros
 PY=/home/lzt/lzt_ros2_ws/.envs/foundpose_gpu/bin/python
 
-$PY scripts/prepare_robi_bop_models.py --objects Chrome_screw Gear
+$PY scripts/datasets/prepare_robi_bop_models.py --objects Chrome_screw Gear
 
-python3 scripts/convert_robi_to_bop.py \
+python3 scripts/datasets/convert_robi_to_bop.py \
   --objects Chrome_screw \
   --scene-ids 4 \
   --maximum-views-per-scene 5
 
-PYOPENGL_PLATFORM=egl $PY scripts/render_robi_bop_masks.py
+PYOPENGL_PLATFORM=egl $PY scripts/datasets/render_robi_bop_masks.py
 ```
 
 最后一步从真实CAD和6D真值渲染 `mask`、`mask_visib` 与

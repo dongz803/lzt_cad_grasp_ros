@@ -7,8 +7,8 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from lzt_cad_grasp_core.mask_evaluation import decode_coco_rle  # noqa: E402
-from lzt_cad_grasp_core.mask_refinement import (  # noqa: E402
+from lzt_perception.mask_evaluation import decode_coco_rle  # noqa: E402
+from lzt_perception.mask_refinement import (  # noqa: E402
     RGBDMaskRefinementConfig,
     binary_mask_to_rle,
     mask_bbox_xywh,

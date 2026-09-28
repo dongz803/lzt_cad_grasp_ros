@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>lzt_examples</name><version>0.2.0</version>
+  <description>Minimal examples for the robot algorithm stack.</description>
+  <maintainer email="lzt@todo.todo">lzt</maintainer><license>Apache-2.0</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>lzt_control</exec_depend><exec_depend>lzt_grasp_planning</exec_depend><exec_depend>lzt_kinematics</exec_depend><exec_depend>lzt_motion_planning</exec_depend><exec_depend>lzt_perception</exec_depend><exec_depend>lzt_trajectory</exec_depend>
+  <test_depend>python3-pytest</test_depend><export><build_type>ament_python</build_type></export>
+</package>
+

@@ -8,19 +8,19 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from lzt_cad_grasp_core.contracts import GraspCandidate, PoseHypothesis  # noqa: E402
-from lzt_cad_grasp_core.robot_constraints import (  # noqa: E402
+from lzt_common.contracts import GraspCandidate, PoseHypothesis  # noqa: E402
+from lzt_mujoco.robot_constraints import (  # noqa: E402
     MujocoUR5eConstraintEvaluator,
     RobotConstraintConfig,
     check_joint_path_collisions,
     solve_site_ik,
 )
-from lzt_cad_grasp_core.robot_frames import (  # noqa: E402
+from lzt_common.robot_frames import (  # noqa: E402
     load_robot_camera_calibration,
     mujoco_base_camera_calibration,
     transform_camera_object_to_base,
 )
-from lzt_cad_grasp_core.simulation import (  # noqa: E402
+from lzt_mujoco.simulation import (  # noqa: E402
     GRIPPER_PINCH_SITE,
     UR5E_BASE_BODY,
     build_workcell_model,
@@ -74,7 +74,7 @@ def test_committed_mujoco_calibration_matches_live_scene() -> None:
     expected = mujoco_base_camera_calibration(model, data)
     actual = load_robot_camera_calibration(
         PROJECT_ROOT
-        / "config/calibration/mujoco_vision_camera_to_ur5e_base.json"
+        / "lzt_description/config/calibration/mujoco_vision_camera_to_ur5e_base.json"
     )
 
     assert actual.base_frame == "ur5e_base"

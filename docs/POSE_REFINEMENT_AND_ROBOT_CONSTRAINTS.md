@@ -20,12 +20,12 @@ UR5e 数值 IK + 关节限位 + MuJoCo 路径碰撞检查
 
 对应代码为：
 
-- `src/lzt_cad_grasp_core/pose_refinement.py`：CAD/RGB-D 位姿修正核心；
-- `scripts/refine_foundpose_poses.py`：批量读取 FoundPose 记录、RGB-D 和 mask；
-- `src/lzt_cad_grasp_core/robot_frames.py`：坐标系契约与外参加载；
-- `scripts/transform_pose_to_robot.py`：相机系物体位姿转换为机器人基坐标系；
-- `src/lzt_cad_grasp_core/robot_constraints.py`：UR5e Jacobian IK 和路径碰撞检查；
-- `scripts/rank_task_grasps.py`：把外参、IK 和碰撞结果接入原有 Top-K 抓取排序。
+- `lzt_perception/lzt_perception/pose_refinement.py`：CAD/RGB-D 位姿修正核心；
+- `scripts/perception/refine_foundpose_poses.py`：批量读取 FoundPose 记录、RGB-D 和 mask；
+- `lzt_common/lzt_common/robot_frames.py`：坐标系契约与外参加载；
+- `scripts/grasp/transform_pose_to_robot.py`：相机系物体位姿转换为机器人基坐标系；
+- `lzt_mujoco/lzt_mujoco/robot_constraints.py`：UR5e Jacobian IK 和路径碰撞检查；
+- `scripts/grasp/rank_task_grasps.py`：把外参、IK 和碰撞结果接入原有 Top-K 抓取排序。
 
 ## CAD 轮廓与深度反馈修正
 
@@ -37,15 +37,17 @@ UR5e 数值 IK + 关节限位 + MuJoCo 路径碰撞检查
 对象 2 的单图、3 候选 smoke test 中，修正目标函数均下降，MSSD 从
 7.20/13.59/15.00 mm 降到 4.35/3.61/2.69 mm；MSPD 从
 3.71/3.27/1.56 px 变为 4.87/4.86/2.28 px。该结果证明局部三维修正有效，也说明
-二维投影指标仍有权衡；在对象 2–4 全量官方评价完成前，不能声称整体 BOP AR 已提升。
+二维投影指标仍有权衡。后续 mode-aware 版本按 CAD 对称聚类位姿模式，精修模式
+中心并向成员传播修正；在 T-LESS 对象 2–4、相同 54.76% 覆盖率下，官方
+BOP19 综合 AR 由 0.29143 提高到 0.43118。该结果仅代表三对象子集。
 
 复现单图检查：
 
 ```bash
 cd /home/lzt/lzt_ros2_ws/src/lzt_cad_grasp_ros
-python3 scripts/refine_foundpose_poses.py \
+python3 scripts/perception/refine_foundpose_poses.py \
   --input outputs/pose_gating/tless_000002/gated-poses.json \
-  --object-config config/objects/tless_000002.yaml \
+  --object-config lzt_description/config/objects/tless_000002.yaml \
   --detections outputs/mask_refinement/tless_objects2_4_guarded/detections_rgbd_refined.json \
   --output-dir outputs/pose_refinement/tless_000002_smoke \
   --top-k 3 --limit-groups 1 --render-point-count 5000 --preview-limit 3
@@ -68,7 +70,7 @@ T_base_object = T_base_camera_cv @ T_camera_object
 实时加载的 MuJoCo 场景矩阵逐元素比较。转换命令为：
 
 ```bash
-python3 scripts/transform_pose_to_robot.py \
+python3 scripts/grasp/transform_pose_to_robot.py \
   --input <与该相机对应的修正位姿.json> \
   --calibration <该相机的机器人外参.json> \
   --output outputs/robot_poses/result.json
@@ -89,10 +91,10 @@ MuJoCo 接触对；结果包含可达性、残差、关节余量、六关节角�
 
 ```bash
 export BOP_PATH=/home/lzt/lzt_ros2_ws/datasets/bop
-python3 scripts/rank_task_grasps.py \
+python3 scripts/grasp/rank_task_grasps.py \
   --pose-hypotheses <与仿真相机对应的Top-K位姿.json> \
   --grasp-candidates <CAD抓取候选.json> \
-  --object-config config/objects/tless_000002.yaml \
+  --object-config lzt_description/config/objects/tless_000002.yaml \
   --goal-transform-json <机器人基坐标系放料目标.json> \
   --robot-camera-calibration config/calibration/mujoco_vision_camera_to_ur5e_base.json \
   --use-mujoco-constraints --path-samples 25 \
@@ -107,12 +109,12 @@ python3 scripts/rank_task_grasps.py \
 
 ## 当前验证
 
-- Python 测试共 49 项通过；
+- 当前仓库 Python 全量测试共 85 项通过；
 - 仿真相机到 UR5e 基座的矩阵复合误差小于 `1e-12`；
 - UR5e site 上移 30 mm 的 IK 在 3 次迭代内收敛，位置残差约 `2.22e-5 m`；
 - 端到端 smoke test 返回 1 个可行候选、真实六关节解和空碰撞对；
 - 人工构造的机器人—墙体穿透会被路径碰撞测试检出。
 
-上述验证完成了“位姿修正—基坐标变换—IK/碰撞约束”的软件链路；尚未完成的部分
-是对象 2–4 全量修正评价、目标 CAD 动态导入场景、完整抓取动力学执行和实机手眼
-标定。
+上述验证完成了“对象 2–4 mode-aware 位姿修正—基坐标变换—IK/碰撞约束”
+的软件链路。尚未完成的部分是 T-LESS 1–30 全量评价、通用流水线默认开启
+mode-aware、模式级协方差到 CVaR 抓取的直接传播，以及实机手眼标定。

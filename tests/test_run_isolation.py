@@ -7,10 +7,16 @@ import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_PATHS = {
+    "run_industrial_cad_pick_place.py": "scripts/pipeline/run_industrial_cad_pick_place.py",
+    "run_tless_obj4_pipeline.py": "scripts/pipeline/run_tless_obj4_pipeline.py",
+    "run_innovation1_grasp_ablation.py": "scripts/evaluation/run_innovation1_grasp_ablation.py",
+    "train_pose_reliability.py": "scripts/perception/train_pose_reliability.py",
+}
 
 
 def _load_script(name: str):
-    path = PROJECT_ROOT / "scripts" / name
+    path = PROJECT_ROOT / SCRIPT_PATHS[name]
     spec = importlib.util.spec_from_file_location(name.removesuffix(".py"), path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

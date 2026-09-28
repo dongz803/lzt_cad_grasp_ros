@@ -7,7 +7,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from lzt_cad_grasp_core.pose_gating import (  # noqa: E402
+from lzt_perception.pose_gating import (  # noqa: E402
     PoseGateConfig,
     contour_reprojection_error_px,
     evaluate_pose_candidate,
@@ -70,6 +70,8 @@ def test_consistent_pose_passes_all_physical_and_rgbd_gates() -> None:
 
     assert decision.accepted
     assert decision.rejection_reasons == ()
+    assert decision.soft_quality_flags == ()
+    assert decision.soft_pass
     assert decision.metrics["silhouette_iou"] == 1.0
     assert decision.metrics["median_depth_error_m"] == 0.0
     assert decision.robust_score > 0.0
@@ -94,7 +96,21 @@ def test_negative_and_out_of_workspace_pose_is_rejected() -> None:
     assert decision.robust_score == 0.0
 
 
-def test_geometrically_shifted_pose_fails_silhouette_and_reprojection() -> None:
+def test_malformed_pose_is_a_hard_rejection_not_an_exception() -> None:
+    source = record()
+    points, intrinsics, mask, depth = observation_for(source)
+    source["R"] = [1.0]
+
+    decision = evaluate_pose_candidate(
+        source, points, intrinsics, mask, depth, PoseGateConfig()
+    )
+
+    assert not decision.accepted
+    assert decision.rejection_reasons == ("invalid_pose",)
+    assert decision.robust_score == 0.0
+
+
+def test_geometrically_shifted_pose_is_soft_scored_not_hard_rejected() -> None:
     reference = record()
     points, intrinsics, mask, depth = observation_for(reference)
     shifted = record(x_m=0.10)
@@ -111,9 +127,25 @@ def test_geometrically_shifted_pose_fails_silhouette_and_reprojection() -> None:
         ),
     )
 
-    assert not decision.accepted
-    assert "low_silhouette_iou" in decision.rejection_reasons
-    assert "high_reprojection_error" in decision.rejection_reasons
+    reference_decision = evaluate_pose_candidate(
+        reference,
+        points,
+        intrinsics,
+        mask,
+        depth,
+        PoseGateConfig(
+            minimum_silhouette_iou=0.2,
+            maximum_reprojection_error_px=5.0,
+        ),
+    )
+
+    assert decision.accepted
+    assert decision.rejection_reasons == ()
+    assert not decision.soft_pass
+    assert "low_silhouette_iou" in decision.soft_quality_flags
+    assert "high_reprojection_error" in decision.soft_quality_flags
+    assert decision.geometric_quality < reference_decision.geometric_quality
+    assert decision.robust_score < reference_decision.robust_score
 
 
 def test_robot_workspace_requires_calibrated_transform() -> None:

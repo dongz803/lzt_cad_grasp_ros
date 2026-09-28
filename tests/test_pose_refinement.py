@@ -6,9 +6,14 @@ import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
+sys.path.insert(0, str(PROJECT_ROOT / "scripts/perception"))
 
-from lzt_cad_grasp_core.pose_gating import render_model_points  # noqa: E402
-from lzt_cad_grasp_core.pose_refinement import (  # noqa: E402
+from refine_foundpose_poses import (  # noqa: E402
+    _raw_pnp_score,
+    _reliability_contexts,
+)
+from lzt_perception.pose_gating import render_model_points  # noqa: E402
+from lzt_perception.pose_refinement import (  # noqa: E402
     PoseRefinementConfig,
     refine_pose_rgbd,
 )
@@ -110,3 +115,46 @@ def test_invalid_refinement_schedule_is_rejected() -> None:
     except ValueError:
         return
     raise AssertionError("mismatched refinement schedules were accepted")
+
+
+def test_post_refinement_context_replaces_only_refined_gate_rows() -> None:
+    accepted_gate = {
+        "scene_id": 1,
+        "image_id": 2,
+        "object_id": 4,
+        "instance_id": 0,
+        "hypothesis_id": 7,
+        "accepted": True,
+        "metrics": {"pnp_score": 0.8},
+    }
+    rejected_gate = {
+        "scene_id": 1,
+        "image_id": 2,
+        "object_id": 4,
+        "instance_id": 0,
+        "hypothesis_id": 8,
+        "accepted": False,
+        "metrics": {"pnp_score": 0.2},
+    }
+    refined = {
+        **accepted_gate,
+        "metrics": {"pnp_score": 0.8, "silhouette_iou": 0.9},
+    }
+
+    context = _reliability_contexts(
+        [accepted_gate, rejected_gate], [refined]
+    )[(1, 2, 4, 0)]
+
+    assert context[0] is refined
+    assert context[1] is rejected_gate
+
+
+def test_raw_pnp_score_is_not_confused_with_calibrated_probability() -> None:
+    record = {
+        "score": 0.91,
+        "calibrated_probability": 0.91,
+        "original_score": 0.7,
+        "pose_gate_metrics": {"pnp_score": 0.63},
+    }
+
+    assert _raw_pnp_score(record) == 0.63

@@ -8,11 +8,14 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from lzt_cad_grasp_core.topk_evaluation import (  # noqa: E402
+from lzt_benchmark.topk_evaluation import (  # noqa: E402
     aggregate_bop_image_runtimes,
     common_coverage_comparison,
+    failure_waterfall,
+    load_detection_counts,
     load_target_counts,
     oracle_topk_summary,
+    recall_at_k,
     select_policy_predictions,
     summarize_selected_predictions,
     write_bop_csv,
@@ -90,6 +93,82 @@ def test_topk_oracle_reports_headroom_without_changing_policy_top1() -> None:
     assert policy["mssd"]["average_recall_fixed_target_denominator"] == 1 / 3
     assert oracle["average_recall_fixed_target_denominator"] == 2 / 3
     assert "not an executable policy" in oracle["warning"]
+
+
+def test_recall_at_k_uses_fixed_target_denominator() -> None:
+    counts = load_target_counts(targets(), {2})
+    records = [
+        pose(1, 0, 0, 0.9, 0.20, 20.0),
+        pose(1, 0, 1, 0.8, 0.05, 5.0),
+        pose(1, 1, 0, 0.7, 0.08, 8.0),
+    ]
+
+    summary = recall_at_k(
+        records, counts, "mssd_n", 0.1, ks=(1, 2), score_key="score"
+    )
+
+    assert summary["predicted_instance_groups"] == 2
+    assert summary["values"]["1"]["successful_target_instances"] == 1
+    assert summary["values"]["1"]["recall_fixed_target_denominator"] == 1 / 3
+    assert summary["values"]["2"]["successful_target_instances"] == 2
+    assert summary["values"]["2"]["recall_fixed_target_denominator"] == 2 / 3
+
+
+def test_failure_waterfall_is_exhaustive_and_mutually_exclusive() -> None:
+    target_payload = [
+        {"scene_id": 1, "im_id": image_id, "obj_id": 2, "inst_count": 1}
+        for image_id in range(1, 7)
+    ]
+    counts = load_target_counts(target_payload, {2})
+    detections = [
+        {"scene_id": 1, "image_id": image_id, "category_id": 2}
+        for image_id in range(2, 7)
+    ]
+    detection_counts = load_detection_counts(detections, {2})
+    raw = [
+        pose(3, 0, 0, 0.9, 0.20, 20.0),
+        pose(4, 0, 0, 0.9, 0.20, 20.0),
+        pose(5, 0, 0, 0.9, 0.20, 20.0),
+        pose(5, 0, 1, 0.8, 0.05, 5.0),
+        pose(6, 0, 0, 0.9, 0.05, 5.0),
+    ]
+    policy = [record for record in raw if record["img_id"] != 3]
+
+    report = failure_waterfall(
+        raw,
+        policy,
+        detection_counts,
+        counts,
+        field="mssd_n",
+        threshold=0.1,
+    )
+
+    stage_counts = {
+        item["name"]: item["count"]
+        for item in report["aggregate"]["stages"]
+    }
+    assert stage_counts == {
+        "missing_detection": 1,
+        "detection_without_pose": 1,
+        "all_hypotheses_hard_rejected": 1,
+        "topk_has_no_correct_candidate": 1,
+        "correct_candidate_but_wrong_top1": 1,
+        "selected_top1_correct": 1,
+    }
+    assert report["aggregate"]["attributed_target_instances"] == 6
+    assert report["aggregate"]["fixed_denominator_success_rate"] == 1 / 6
+    flow = {
+        item["name"]: item["remaining_count"]
+        for item in report["aggregate"]["flow"]
+    }
+    assert flow == {
+        "target_instances": 6,
+        "after_object_detection": 5,
+        "after_pose_generation": 4,
+        "after_hard_gate": 3,
+        "topk_contains_correct_candidate": 2,
+        "selected_top1_correct": 1,
+    }
 
 
 def test_target_budget_removes_extra_detection_groups() -> None:

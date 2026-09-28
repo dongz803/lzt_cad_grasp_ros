@@ -7,8 +7,8 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from lzt_cad_grasp_core.contracts import CADObject, ContinuousSymmetry  # noqa: E402
-from lzt_cad_grasp_core.pose_hypotheses import (  # noqa: E402
+from lzt_common.contracts import CADObject, ContinuousSymmetry  # noqa: E402
+from lzt_perception.pose_hypotheses import (  # noqa: E402
     foundpose_records_to_top_k,
     hypothesis_sets_to_jsonable,
 )

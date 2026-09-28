@@ -7,7 +7,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from lzt_cad_grasp_core.cad_grasp import (  # noqa: E402
+from lzt_grasp_planning.cad_grasp import (  # noqa: E402
     MeshGeometry,
     _mesh_intersects_aabb,
     _mesh_center_of_mass,
@@ -15,7 +15,7 @@ from lzt_cad_grasp_core.cad_grasp import (  # noqa: E402
     generate_parallel_jaw_candidates_with_diagnostics,
     load_ascii_ply_geometry,
 )
-from lzt_cad_grasp_core.object_config import load_object_config  # noqa: E402
+from lzt_common.object_config import load_object_config  # noqa: E402
 
 
 def write_box_ply(path: Path) -> None:

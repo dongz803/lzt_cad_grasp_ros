@@ -81,7 +81,7 @@ Toolkit 的流程，适合先回答“官方基线能否复现、接口是否正
 cd /home/lzt/lzt_ros2_ws/src/lzt_cad_grasp_ros
 
 /home/lzt/lzt_ros2_ws/.envs/foundpose_gpu/bin/python \
-  scripts/prepare_tless_smoke.py \
+  scripts/datasets/prepare_tless_smoke.py \
   --source /home/lzt/lzt_ros2_ws/datasets/bop \
   --destination /home/lzt/lzt_ros2_ws/datasets/bop_smoke
 
@@ -90,12 +90,12 @@ export BOP_OUTPUT_PATH=/home/lzt/lzt_ros2_ws/src/lzt_cad_grasp_ros/outputs/found
 export PYOPENGL_PLATFORM=egl
 export FOUNDPOSE_PYTHON=/home/lzt/lzt_ros2_ws/.envs/foundpose_gpu/bin/python
 
-$FOUNDPOSE_PYTHON scripts/run_foundpose.py gen_templates \
-  --opts-path config/foundpose_smoke/tless_templates.json
-$FOUNDPOSE_PYTHON scripts/run_foundpose.py gen_repre \
-  --opts-path config/foundpose_smoke/tless_repre.json
-$FOUNDPOSE_PYTHON scripts/run_foundpose.py infer \
-  --opts-path config/foundpose_smoke/tless_infer.json
+$FOUNDPOSE_PYTHON scripts/pipeline/run_foundpose.py gen_templates \
+  --opts-path lzt_perception/config/foundpose_smoke/tless_templates.json
+$FOUNDPOSE_PYTHON scripts/pipeline/run_foundpose.py gen_repre \
+  --opts-path lzt_perception/config/foundpose_smoke/tless_repre.json
+$FOUNDPOSE_PYTHON scripts/pipeline/run_foundpose.py infer \
+  --opts-path lzt_perception/config/foundpose_smoke/tless_infer.json
 ```
 
 首次连通性验证得到 195 组查询—模板特征对应并保存最佳 1 个粗位姿；随后扩展为
@@ -113,7 +113,7 @@ outputs/foundpose_smoke/inference/tless_smoke_v1/1/pose-hypotheses-top5.json
 
 ## 标准 BOP19 状态
 
-标准配置位于 `config/foundpose_bop19/`。正式基线保持 FoundPose 上游的
+标准配置位于 `lzt_perception/config/foundpose_bop19/`。正式基线保持 FoundPose 上游的
 `best_coarse`，Top-K 使用单独的 `tless_infer_topk.json`，避免研究接口改变官方
 基线的提交排名。全量数据检查结果为 30 个 CAD、20 个场景、1000 张目标图像、
 4904 条目标项和 6423 个目标实例，缺失文件为 0。
@@ -163,7 +163,7 @@ Toolkit 各阈值文件的单类 `obj_recalls` 正确汇总所得。
 
 ### GT/CNOS 统一掩膜评价
 
-2026-09-06 新增 `scripts/evaluate_mask_sources.py`，使用同一份 BOP19
+2026-09-06 新增 `scripts/evaluation/evaluate_mask_sources.py`，使用同一份 BOP19
 `test_targets_bop19.json` 比较可见 GT mask、CNOS 和后续改进分割。所有检测源
 统一按分数保留 Top-`inst_count`，CNOS 默认执行与 FoundPose 相同的 3×3
 开运算，并使用按分数排序的一对一 IoU 匹配。输出包括整体及逐对象 IoU、像素
@@ -184,14 +184,14 @@ outputs/mask_evaluation/tless_objects1_10_gt_cnos/matches.csv
 
 可选 `--pose-root NAME=PATH` 会以同一目标分母汇总对应 FoundPose 的覆盖率与
 初步 MSSD/MSPD。GT 位姿推理使用隔离配置
-`config/foundpose_bop19/tless_infer_gt.json`，但本次只建立配置和评价入口，尚未
+`lzt_perception/config/foundpose_bop19/tless_infer_gt.json`，但本次只建立配置和评价入口，尚未
 运行对象 1–10 的 GT-mask FoundPose 推理，因此不能把 GT/CNOS 的位姿差异称为
 已完成实验。
 
 ### RGB-D mask 修正结果
 
-2026-09-07 新增 `src/lzt_cad_grasp_core/mask_refinement.py` 和
-`scripts/refine_bop_masks.py`。算法不读取 GT：先从 CNOS mask 腐蚀核心估计鲁棒
+2026-09-07 新增 `lzt_perception/lzt_perception/mask_refinement.py` 和
+`scripts/perception/refine_bop_masks.py`。算法不读取 GT：先从 CNOS mask 腐蚀核心估计鲁棒
 深度区间，再用深度和 Lab 颜色一致性形成候选修正；只有候选改动占原 mask
 10%–25%、向外增长不超过 8% 时才采用，否则保留原 mask。对象 2–4 共处理
 2299 个检测，其中 227 个采用修正、2071 个因保护条件保持不变、1 个因有效深度
@@ -232,11 +232,15 @@ outputs/mask_evaluation/tless_objects1_10_gt_cnos/matches.csv
 排第一的负深度解分别有 1/8/5 个；对象 4 另有一个约 17.8 km 深度的极端 PnP
 离群解。这些候选的矩阵形式合法，但物理上不可用。
 
-2026-09-07 已新增 `src/lzt_cad_grasp_core/pose_gating.py` 和
-`scripts/gate_foundpose_topk.py`，在协方差估计前依次审计：物体和 CAD 点正深度、
-相机工作空间、PnP 内点与分数、CAD 投影轮廓 IoU、双向轮廓重投影误差、观测/渲染
-深度中位误差和深度内点率。拒绝项权重置零；通过项以原始 PnP 分数乘几何质量
-重加权，再进行 CAD 对称归并和 SE(3) 协方差估计。门控本身不读取 GT 误差。
+2026-09-21 起，`lzt_perception/lzt_perception/pose_gating.py` 和
+`scripts/perception/gate_foundpose_topk.py` 改为“极少数硬门控＋连续软特征”：非有限位姿、
+非正深度/CAD 位于相机后方、超出已配置工作空间以及缺少必要观测 mask 才会拒绝；
+PnP 内点与分数、CAD 投影轮廓 IoU、双向轮廓重投影误差、观测/渲染深度中位误差
+和深度内点率只产生软告警与连续质量分。硬有效候选以原始 PnP 分数乘连续几何
+质量重排序，再进行 CAD 对称归并和 SE(3) 协方差估计。过程不读取 GT 误差。
+
+下表是 2026-09-07 旧版“全部阈值均硬拒绝”的历史基线，不能当作新版软评分结果；
+新版必须在独立输出目录完整重跑并用官方 BOP 指标复评后才能声称性能提升。
 
 对象 2–4 的完整结果为：
 
@@ -254,10 +258,13 @@ outputs/mask_evaluation/tless_objects1_10_gt_cnos/matches.csv
 点渲染近似，后续需与精确三角网格渲染对照。
 
 上述 86.5% 是“原始已有位姿的 777 组”内的条件覆盖率，不能作为端到端覆盖率。
-2026-09-07 新增 `src/lzt_cad_grasp_core/topk_evaluation.py` 和
-`scripts/evaluate_topk_coverage.py`，固定使用对象 2–4 的 1419 个 BOP19 目标实例
+2026-09-07 新增 `lzt_benchmark/lzt_benchmark/topk_evaluation.py` 和
+`scripts/evaluation/evaluate_topk_coverage.py`，固定使用对象 2–4 的 1419 个 BOP19 目标实例
 作为分母。缺失检测、PnP 失败和门控后全拒绝均计为失败；每个检测只选一个 Top-1，
 每个图像/对象最多输出 `inst_count` 个预测，再交给官方 BOP Toolkit 做一对一匹配。
+2026-09-21 又增加固定分母 Recall@1/3/5 和六阶段互斥失败瀑布；完整区分缺失检测
+与检测后无位姿时必须传入 `--detections`。瀑布的检测阶段采用场景/图像/类别槽位
+计数，并非 mask-to-GT IoU 匹配，因此最终精度仍以官方 BOP 评价为准。
 
 公平评价结果如下：
 
@@ -265,12 +272,19 @@ outputs/mask_evaluation/tless_objects1_10_gt_cnos/matches.csv
 |---|---:|---:|---:|---:|---:|---:|
 | 原始 Top-K 分数 Top-1 | 777/1419 | 0.5476 | 0.2095 | 0.4855 | 0.1793 | 0.2914 |
 | RGB-D 几何门控 Top-1 | 672/1419 | 0.4736 | 0.3367 | 0.4531 | 0.2876 | 0.3592 |
+| 对称模式 RGB-D 精修 Top-1 | 777/1419 | 0.5476 | 0.4246 | 0.4936 | 0.3753 | 0.4312 |
 
 门控使三指标宏平均 AR 绝对提高 0.0677（相对约 23.2%），MSSD 和 VSD 明显提高，
 但以少输出 105 个位姿、目标覆盖率下降 7.40 个百分点为代价，且 MSPD 绝对下降
 0.0323。因此结论应表述为“门控提高了三维表面和可见表面可靠性，但当前二维投影
 排序仍需改进”，不能只引用保留样本的中位误差。对象 2、3、4 的三指标 AR 分别从
 0.2237/0.4461/0.2045 提升到 0.2699/0.5520/0.2556。
+
+后续 mode-aware 方法使用对称感知模式聚类、模式中心 RGB-D 精修、修正传播和
+重新校准，恢复到与原始方法相同的 777/1419 输出和 54.76% 覆盖率，同时将综合
+AR 提高到 0.4312。这是对象 2–4 子集结果，不能与 FoundPose 论文的完整
+T-LESS 30 类 AR 直接宣称优劣。结果位于
+`outputs/innovation1_pose_modes/tless_objects2_4_v1/evaluation/summary.json`。
 
 同样保留 672 个位姿（47.36%目标覆盖率）时，记录内快速评价的条件 MSSD AR
 由原始排序的 0.3996 提升到门控排序的 0.6750；MSPD AR 由 0.6641 小幅提升到
@@ -312,9 +326,9 @@ Top-K 独立版本首次运行还暴露了 FoundPose 源码使用 `version` 而�
 边缘距离 0.20；这是可解释基线而不是最终学习权重。对象 2 和 4 的首组 Top-K
 联合鲁棒分数接近零，原因是上游位姿离群与分散，而不是 CAD 候选不满足几何条件。
 
-批处理入口 `scripts/run_bop19_stage.py` 按对象保存配置和 profile，重跑时自动跳过
+批处理入口 `scripts/pipeline/run_bop19_stage.py` 按对象保存配置和 profile，重跑时自动跳过
 完整对象。最终只有在 30 个对象的三个阶段、官方五项 score 字段和结果 CSV 均
-齐全时，`scripts/freeze_foundpose_baseline.py` 才允许生成 `FROZEN_BASELINE.json`。
+齐全时，`scripts/evaluation/freeze_foundpose_baseline.py` 才允许生成 `FROZEN_BASELINE.json`。
 
 ## ROBI 的定位
 
@@ -366,6 +380,8 @@ featuremetric refinement，因此实验中要明确称为“FoundPose 开源粗�
 8. [x] 将不确定度接入取料—放料约束联合评分；
 9. [x] 编写 ROBI→BOP 适配器，完成 Chrome Screw 真实反光数据小样本验证；
 10. [ ] 将 ROBI 扩展到 Gear 的真实场景，验证离散对称性与抓取排序。
+11. [x] 完成对象 2–4 的对称模式精修和官方 BOP19 评价；
+12. [ ] 完成 T-LESS 1–30 同配置全量评价并将模式级协方差接入 CVaR 抓取。
 
 ## 官方来源与许可
 

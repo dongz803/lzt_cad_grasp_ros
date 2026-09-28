@@ -7,13 +7,13 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from lzt_cad_grasp_core.contracts import (  # noqa: E402
+from lzt_common.contracts import (  # noqa: E402
     GraspCandidate,
     PickPlaceTask,
     PoseHypothesis,
     PoseHypothesisSet,
 )
-from lzt_cad_grasp_core.task_grasp import (  # noqa: E402
+from lzt_grasp_planning.task_grasp import (  # noqa: E402
     MotionConstraintResult,
     RobustScoringConfig,
     rank_task_grasps,

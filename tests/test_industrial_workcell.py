@@ -8,20 +8,20 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from lzt_cad_grasp_core.contracts import CADObject  # noqa: E402
-from lzt_cad_grasp_core.industrial_workcell import (  # noqa: E402
+from lzt_common.contracts import CADObject  # noqa: E402
+from lzt_mujoco.industrial_workcell import (  # noqa: E402
     TARGET_BODY_NAME,
     TARGET_JOINT_NAME,
     body_transform,
     build_industrial_cad_workcell,
     set_freejoint_transform,
 )
-from lzt_cad_grasp_core.object_config import (  # noqa: E402
+from lzt_common.object_config import (  # noqa: E402
     GraspGenerationSpec,
     GripperSpec,
     ObjectConfig,
 )
-from lzt_cad_grasp_core.simulation import reset_robot_home  # noqa: E402
+from lzt_mujoco.simulation import reset_robot_home  # noqa: E402
 
 
 CUBE_PLY = """ply

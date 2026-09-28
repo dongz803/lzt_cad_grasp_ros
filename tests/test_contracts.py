@@ -8,7 +8,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from lzt_cad_grasp_core.contracts import (  # noqa: E402
+from lzt_common.contracts import (  # noqa: E402
     CameraObservation,
     GraspCandidate,
     PoseHypothesis,

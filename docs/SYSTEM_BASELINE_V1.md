@@ -15,7 +15,7 @@ UR5e IK/碰撞检查 → Robotiq 2F-85 动态抓放与验收。
 cd /home/lzt/lzt_ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
-python3 src/lzt_cad_grasp_ros/scripts/run_tless_obj4_pipeline.py \
+python3 src/lzt_cad_grasp_ros/scripts/pipeline/run_tless_obj4_pipeline.py \
   --run-id system_baseline_v1 --seed 0
 ```
 

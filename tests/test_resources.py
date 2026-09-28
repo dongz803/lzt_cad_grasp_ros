@@ -7,8 +7,8 @@ import mujoco
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from lzt_cad_grasp_core.paths import scene_path  # noqa: E402
-from lzt_cad_grasp_core.simulation import build_workcell_model  # noqa: E402
+from lzt_common.paths import scene_path  # noqa: E402
+from lzt_mujoco.simulation import build_workcell_model  # noqa: E402
 
 
 def test_all_baseline_scenes_load_independently() -> None:

@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>lzt_system_tests</name>
+  <version>0.2.0</version>
+  <description>Cross-package architecture and end-to-end regression tests.</description>
+  <maintainer email="lzt@todo.todo">lzt</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>ament_index_python</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  <test_depend>lzt_benchmark</test_depend>
+  <test_depend>lzt_bringup</test_depend>
+  <test_depend>lzt_cad_grasp_ros</test_depend>
+  <test_depend>lzt_common</test_depend>
+  <test_depend>lzt_control</test_depend>
+  <test_depend>lzt_description</test_depend>
+  <test_depend>lzt_examples</test_depend>
+  <test_depend>lzt_grasp_planning</test_depend>
+  <test_depend>lzt_interfaces</test_depend>
+  <test_depend>lzt_kinematics</test_depend>
+  <test_depend>lzt_motion_planning</test_depend>
+  <test_depend>lzt_mujoco</test_depend>
+  <test_depend>lzt_perception</test_depend>
+  <test_depend>lzt_trajectory</test_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

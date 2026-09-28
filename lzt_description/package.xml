@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>lzt_description</name>
+  <version>0.2.0</version>
+  <description>UR5e, gripper, camera, object and workcell model resources.</description>
+  <maintainer email="lzt@todo.todo">lzt</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>
+

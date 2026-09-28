@@ -1,6 +1,7 @@
 # lzt_cad_grasp_ros
 
-本包用于独立探索“CAD 驱动、学习辅助的工业物料 6D 位姿估计与鲁棒上下料”路线。
+本仓库用于独立探索“CAD 驱动、学习辅助的工业物料 6D 位姿估计与鲁棒上下料”路线，
+并按机械臂算法栈组织为多个 ROS 2 包。
 原包 `lzt_mujoco_ros` 保留为传统方法基线，两者不互相导入算法代码。
 
 ## 研究边界
@@ -10,6 +11,27 @@
 - 抓取模块使用 CAD 坐标系候选，并联合检查取料、放料、IK 和碰撞约束；
 - 铜柱只作为首个系统验证对象，不在接口中固化颜色、尺寸、主轴或粗细端规则；
 - 传统 HSV、RANSAC、PCA 路线继续保留在 `lzt_mujoco_ros` 中作为对照。
+
+## 机械臂算法栈
+
+运行链路固定为：
+
+```text
+RGB-D → perception → grasp_planning → kinematics
+      → motion_planning → trajectory → control → MuJoCo/真实机械臂
+```
+
+- `lzt_perception` 与 `lzt_grasp_planning` 保存论文研究算法；
+- `lzt_kinematics` 只定义正逆运动学契约和结果，当前 MuJoCo Jacobian IK 实现在
+  `lzt_mujoco`，以后可以替换为 MoveIt 或实机模型；
+- `lzt_motion_planning` 输出无时间戳的无碰撞几何路径；
+- `lzt_trajectory` 将路径转换为带时间、速度和加速度的轨迹；
+- `lzt_control` 消费轨迹并定义关节、笛卡尔、夹爪和力控接口；
+- `lzt_mujoco` 是执行后端，不作为通用算法层；
+- `lzt_cad_grasp_ros` 仅保留旧 ROS 可执行程序的兼容入口。
+
+详细边界、输入输出和当前实现程度见
+[`docs/架构说明.md`](docs/架构说明.md)。
 
 ## 当前状态
 
@@ -43,9 +65,10 @@
   BOP 目标实例并采用官方一对一匹配后，目标覆盖率由 54.76% 降到 47.36%，
   对象 2–4 宏平均 BOP AR 由 0.2914 提升到 0.3592，其中 MSSD/VSD 提升，
   MSPD 从 0.4855 降到 0.4531；
-- 已增加 CAD 轮廓与 RGB-D 深度反馈的局部 SE(3) 位姿修正，并以独立脚本保存
-  修正前后指标、审计 JSON 和轮廓预览；对象 2 的单图 3 候选 MSSD 均降低，但
-  MSPD 有小幅波动，因此尚不把 smoke test 当作全数据集提升结论；
+- 已增加对称感知位姿模式、模式内 6×6 协方差和模式中心 RGB-D 精修；
+  在对象 2–4、固定 1419 个目标和 54.76% 覆盖率下，官方 BOP19 宏平均
+  MSSD/MSPD/VSD/综合 AR 由 0.2095/0.4855/0.1793/0.2914 提高到
+  0.4246/0.4936/0.3753/0.4312；这仍是三对象子集结果，不是完整 T-LESS 结论；
 - 已接通 `T_base_object = T_base_camera × T_camera_object`、MuJoCo 仿真精确
   外参、UR5e Jacobian 阻尼最小二乘 IK 和逐段路径接触检查，排序结果会输出基座系
   抓取矩阵、六关节解和碰撞对；实机仍需单独完成手眼标定；
@@ -64,18 +87,22 @@
 
 ```text
 lzt_cad_grasp_ros/
-├── assets/                       # 独立复制的 UR5e、Tracer、2F-85 资源
-├── config/
-│   ├── exploration.yaml          # ROS 2 探索节点配置
-│   ├── foundpose_baseline.yaml   # FoundPose、GPU 和数据阶段配置
-│   └── objects/                  # 每种 CAD 的独立配置
-├── docs/                         # 新路线的方法与环境说明
-├── launch/
-├── scenes/                       # 从传统包复制的仿真环境基线
-├── src/
-│   ├── lzt_cad_grasp_core/       # 与 ROS 无关的方法和数据契约
-│   └── lzt_cad_grasp_ros/        # ROS 2 适配层
-├── tests/
+├── lzt_common/                   # 公共契约、SE(3)、配置和资源路径
+├── lzt_interfaces/               # ROS 消息、服务和动作
+├── lzt_description/              # UR5e/夹爪/相机/CAD/场景资源
+├── lzt_perception/               # 分割、Top-K 位姿、门控、精修和可靠性
+├── lzt_grasp_planning/           # CAD 抓取生成和风险感知排序
+├── lzt_kinematics/               # 运动学接口与通用结果
+├── lzt_motion_planning/          # 几何路径和碰撞规划接口
+├── lzt_trajectory/               # 插值和时间参数化
+├── lzt_control/                  # 关节、笛卡尔、夹爪和力控接口
+├── lzt_mujoco/                   # MuJoCo 模型、IK、碰撞和执行适配
+├── lzt_bringup/                  # ROS 节点、launch 与系统配置
+├── lzt_benchmark/                # BOP/ROBI 评价与论文实验
+├── lzt_system_tests/             # 跨包边界和端到端测试
+├── lzt_examples/                 # 最小使用示例
+├── lzt_cad_grasp_ros/            # 旧 ROS 包兼容入口
+├── tests/                         # 原有算法回归测试
 ├── third_party/                  # 外部方法说明；源码本身不纳入 Git
 └── outputs/                      # 实验结果，不纳入版本控制
 ```
@@ -97,7 +124,7 @@ Git 仓库。当前保留三个目录，各自用途不同：
   该目录，不能随意删除。
 - `bop_smoke/` 用于限制 smoke test 只处理 T-LESS 对象 1、场景 20、图像 3。
   它实际只占约 36 KB，大部分内容是指向 `bop/` 的软链接，可以通过
-  `scripts/prepare_tless_smoke.py` 重新生成。
+  `scripts/datasets/prepare_tless_smoke.py` 重新生成。
 - `downloads/` 保存三个 T-LESS 下载压缩包和原始 CNOS JSON，约占 891 MB。
   这些内容已经解压并整理到 `bop/`，当前作为原始下载备份保留，不参与推理。
 
@@ -163,7 +190,7 @@ outputs/foundpose_bop19_topk/inference/tless_bop19_standard_topk_v1/<对象号>/
 每目标 Top-`inst_count` 选择和 3×3 开运算。对象 1–10 的当前基线命令为：
 
 ```bash
-python3 scripts/evaluate_mask_sources.py \
+python3 scripts/evaluation/evaluate_mask_sources.py \
   --object-ids 1 2 3 4 5 6 7 8 9 10 \
   --pose-root cnos=outputs/foundpose_bop19/inference/tless_bop19_standard_v1 \
   --output-dir outputs/mask_evaluation/tless_objects1_10_gt_cnos
@@ -174,7 +201,7 @@ python3 scripts/evaluate_mask_sources.py \
 边界 F1、中心误差和面积比。新增改进分割可通过重复的
 `--detections improved=<BOP检测JSON>` 接入，不需要修改评价代码。
 
-GT-mask FoundPose 使用独立配置 `config/foundpose_bop19/tless_infer_gt.json`，
+GT-mask FoundPose 使用独立配置 `lzt_perception/config/foundpose_bop19/tless_infer_gt.json`，
 结果版本为 `bop19_standard_gt_v1`，不会覆盖 CNOS 基线。该推理尚未批量运行。
 
 ### RGB-D mask 修正与 Top-K 异常门控
@@ -183,11 +210,11 @@ mask 修正不读取 GT，只利用 CNOS mask 内部的鲁棒深度区间、邻�
 一致性和连通区域。保守保护条件防止后处理破坏原本正确的 mask：
 
 ```bash
-python3 scripts/refine_bop_masks.py \
+python3 scripts/perception/refine_bop_masks.py \
   --object-ids 2 3 4 \
   --output-dir outputs/mask_refinement/tless_objects2_4_guarded
 
-python3 scripts/evaluate_mask_sources.py \
+python3 scripts/evaluation/evaluate_mask_sources.py \
   --object-ids 2 3 4 \
   --detections cnos=/home/lzt/lzt_ros2_ws/datasets/bop/detections/cnos-fastsam/cnos-fastsam_tless-test.json \
   --detections rgbd=outputs/mask_refinement/tless_objects2_4_guarded/detections_rgbd_refined.json \
@@ -195,14 +222,17 @@ python3 scripts/evaluate_mask_sources.py \
   --output-dir outputs/mask_evaluation/tless_objects2_4_rgbd_guarded_compare
 ```
 
-随后对原始 FoundPose Top-K 做候选级门控。以下命令分别运行对象 2–4：
+随后对原始 FoundPose Top-K 做候选级可靠性处理。当前版本只把非有限位姿、
+非正深度/CAD 位于相机后方、超出相机或机器人工作空间、缺少必要观测 mask
+作为硬拒绝；PnP、轮廓和深度阈值仅生成软告警与连续质量特征，不再一票否决。
+以下命令分别运行对象 2–4：
 
 ```bash
 export BOP_PATH=/home/lzt/lzt_ros2_ws/datasets/bop
 for obj in 2 3 4; do
-  python3 scripts/gate_foundpose_topk.py \
+  python3 scripts/perception/gate_foundpose_topk.py \
     --input outputs/foundpose_bop19_topk/inference/tless_bop19_standard_topk_v1/$obj/estimated-poses.json \
-    --object-config config/objects/tless_$(printf '%06d' "$obj").yaml \
+    --object-config lzt_description/config/objects/tless_$(printf '%06d' "$obj").yaml \
     --detections outputs/mask_refinement/tless_objects2_4_guarded/detections_rgbd_refined.json \
     --output-dir outputs/pose_gating/tless_$(printf '%06d' "$obj")
 done
@@ -210,7 +240,8 @@ done
 
 每个对象输出 `summary.json`、逐候选 `audit.json/candidates.csv`、门控后的
 `gated-poses.json` 和重新归并/估计协方差的 `pose-hypotheses-gated.json`。
-门控过程不使用 MSSD/MSPD；这两个真值指标仅在结束后写入 `evaluation_only`
+审计结果分别保存 `hard_rejection_reasons`、`soft_quality_flags`、`soft_pass` 和
+各连续质量分量。运行过程不使用 MSSD/MSPD；这两个真值指标仅在结束后写入 `evaluation_only`
 用于论文对照。当前 T-LESS 离线图像没有机器人外参，因此相机工作空间门控已启用，
 机器人工作空间接口已实现但未启用；传入 `--robot-camera-transform` 和机器人边界
 后才能进行有物理意义的机器人工作空间检查。CAD 投影采用确定性 CPU 点渲染，
@@ -219,14 +250,14 @@ done
 ### 覆盖率公平的 Top-K 评价
 
 门控允许拒绝全部候选，因此不能只比较“保留下来的位姿”中位误差。
-`scripts/evaluate_topk_coverage.py` 固定使用 BOP19 `test_targets_bop19.json`
+`scripts/evaluation/evaluate_topk_coverage.py` 固定使用 BOP19 `test_targets_bop19.json`
 中的目标实例数作为分母；缺失检测、PnP 失败和门控后全拒绝都计为失败。同时输出
 完整工作点、相同覆盖率比较、风险—覆盖率曲线、仅用于分析的 Top-K GT oracle，
 以及供官方 BOP Toolkit 做一对一 GT 匹配的结果 CSV：
 
 ```bash
 PY=/home/lzt/lzt_ros2_ws/.envs/foundpose_gpu/bin/python
-$PY scripts/evaluate_topk_coverage.py \
+$PY scripts/evaluation/evaluate_topk_coverage.py \
   --method raw=outputs/foundpose_bop19_topk/inference/tless_bop19_standard_topk_v1/2/estimated-poses.json \
   --method raw=outputs/foundpose_bop19_topk/inference/tless_bop19_standard_topk_v1/3/estimated-poses.json \
   --method raw=outputs/foundpose_bop19_topk/inference/tless_bop19_standard_topk_v1/4/estimated-poses.json \
@@ -234,12 +265,18 @@ $PY scripts/evaluate_topk_coverage.py \
   --method gated=outputs/pose_gating/tless_000003/gated-poses.json \
   --method gated=outputs/pose_gating/tless_000004/gated-poses.json \
   --object-id 2 --object-id 3 --object-id 4 \
+  --detections /home/lzt/lzt_ros2_ws/datasets/bop/detections/cnos-fastsam/cnos-fastsam_tless-test.json \
   --output-dir outputs/topk_evaluation/tless_objects2_4_v1 \
   --run-official --official-workers 1
 ```
 
 无图形环境时，官方 VSD 渲染需要 EGL，例如在命令前添加
 `PYOPENGL_PLATFORM=egl`。输出目录中的 `summary.json` 是完整机器可读报告，
+其中 `recall_at_k` 默认给出固定分母的 Recall@1/3/5；`failure_waterfall`
+把全部目标互斥归入缺失检测、检测后无位姿、硬门控全拒绝、Top-K 无正确候选、
+有正确候选但 Top-1 选错、Top-1 正确六个阶段，并逐对象报告。检测阶段按
+场景/图像/类别的输出槽位计数并受 `inst_count` 限制，不等同于 mask 与 GT 的
+IoU 一对一匹配；最终论文指标仍应使用官方 BOP 匹配。
 `risk_coverage.csv` 和 `risk_coverage.svg` 分别用于统计和画图，`bop_results/`
 与 `official_eval/` 保存官方协议的输入和结果。快速的记录内 MSSD/MSPD 只用于
 调试；论文主结果应引用 `official_bop19`，并同时报告目标覆盖率。
@@ -254,14 +291,14 @@ cd /home/lzt/lzt_ros2_ws/src/lzt_cad_grasp_ros
 export BOP_PATH=/home/lzt/lzt_ros2_ws/datasets/bop
 PY=/home/lzt/lzt_ros2_ws/.envs/foundpose_gpu/bin/python
 
-python3 scripts/validate_tless_bop19.py
-$PY scripts/run_bop19_stage.py gen_templates --workers 2
-$PY scripts/run_bop19_stage.py gen_repre --workers 1
-$PY scripts/run_bop19_stage.py infer --workers 2
+python3 scripts/datasets/validate_tless_bop19.py
+$PY scripts/pipeline/run_bop19_stage.py gen_templates --workers 2
+$PY scripts/pipeline/run_bop19_stage.py gen_repre --workers 1
+$PY scripts/pipeline/run_bop19_stage.py infer --workers 2
 
-python3 scripts/export_foundpose_bop.py \
+python3 scripts/evaluation/export_foundpose_bop.py \
   --output outputs/foundpose_bop19/bop_results/foundpose-bop19-standard_tless-test.csv
-$PY scripts/evaluate_bop19_official.py \
+$PY scripts/evaluation/evaluate_bop19_official.py \
   --result-csv outputs/foundpose_bop19/bop_results/foundpose-bop19-standard_tless-test.csv
 ```
 
@@ -274,27 +311,27 @@ profile 测量的是整张 GPU 的总占用，并同时记录运行前基线、�
 
 ```bash
 export BOP_PATH=/home/lzt/lzt_ros2_ws/datasets/bop
-python3 scripts/convert_foundpose_topk.py \
+python3 scripts/perception/convert_foundpose_topk.py \
   --input outputs/foundpose_smoke/inference/tless_smoke_v1/1/estimated-poses.json \
-  --object-config config/objects/tless_000001.yaml \
+  --object-config lzt_description/config/objects/tless_000001.yaml \
   --output outputs/foundpose_smoke/inference/tless_smoke_v1/1/pose-hypotheses-top5.json
-python3 scripts/generate_cad_grasps.py \
-  --object-config config/objects/tless_000001.yaml \
+python3 scripts/grasp/generate_cad_grasps.py \
+  --object-config lzt_description/config/objects/tless_000001.yaml \
   --output outputs/cad_grasps/tless_000001.json
-python3 scripts/rank_task_grasps.py \
+python3 scripts/grasp/rank_task_grasps.py \
   --pose-hypotheses outputs/foundpose_smoke/inference/tless_smoke_v1/1/pose-hypotheses-top5.json \
   --grasp-candidates outputs/cad_grasps/tless_000001.json \
-  --object-config config/objects/tless_000001.yaml \
+  --object-config lzt_description/config/objects/tless_000001.yaml \
   --output outputs/task_grasps/tless_000001_scene20_image3.json
 ```
 
 正式 BOP 基线使用上游一致的 `best_coarse`；Top-K 研究接口使用独立配置
-`config/foundpose_bop19/tless_infer_topk.json`，避免多个同实例假设改变官方基线排名。
+`lzt_perception/config/foundpose_bop19/tless_infer_topk.json`，避免多个同实例假设改变官方基线排名。
 对象 2–4 的完整 Top-K 可使用以下命令断点续跑：
 
 ```bash
-PYOPENGL_PLATFORM=egl $PY scripts/run_bop19_stage.py infer \
-  --config config/foundpose_bop19/tless_infer_topk.json \
+PYOPENGL_PLATFORM=egl $PY scripts/pipeline/run_bop19_stage.py infer \
+  --config lzt_perception/config/foundpose_bop19/tless_infer_topk.json \
   --output-root outputs/foundpose_bop19_topk \
   --object-start 2 --object-end 4 --workers 1
 ```
@@ -313,12 +350,12 @@ outputs/task_grasps/tless_00000<对象号>_topk_set0.json
 
 ## 场景对应关系
 
-- `scenes/baseline_vision_single.xml`：原单铜柱 RGB-D 场景；
-- `scenes/baseline_vision_ten.xml`：原十铜柱无遮挡场景；
-- `scenes/exploration_workcell.xml`：原完整上下料工作台场景。
-- `scenes/industrial_cad_single.xml`：工业 CAD 动态注入场景；不再把铜柱固定写在 XML，
+- `lzt_description/scenes/baseline_vision_single.xml`：原单铜柱 RGB-D 场景；
+- `lzt_description/scenes/baseline_vision_ten.xml`：原十铜柱无遮挡场景；
+- `lzt_description/scenes/exploration_workcell.xml`：原完整上下料工作台场景。
+- `lzt_description/scenes/industrial_cad_single.xml`：工业 CAD 动态注入场景；不再把铜柱固定写在 XML，
   由执行脚本按物料 YAML 选择 CAD。
-- `scenes/industrial_cad_grasp_focus.xml`：抓取优先场景；保留相同机器人、相机、
+- `lzt_description/scenes/industrial_cad_grasp_focus.xml`：抓取优先场景；保留相同机器人、相机、
   工作台和上料区，但把 6 个铜柱圆形点位改为一个通用工业物料矩形下料区。
 
 这些文件是新路线的初始环境副本。后续修改新场景不会影响传统基线包。
@@ -331,19 +368,19 @@ outputs/task_grasps/tless_00000<对象号>_topk_set0.json
 ```bash
 cd /home/lzt/lzt_ros2_ws
 source /opt/ros/humble/setup.bash
-colcon build --symlink-install --packages-select lzt_cad_grasp_ros
+colcon build --symlink-install --packages-up-to lzt_cad_grasp_ros lzt_system_tests
 source install/setup.bash
 export BOP_PATH=/home/lzt/lzt_ros2_ws/datasets/bop
 
 # 只采集 RGB-D/掩膜并审核 IK 与碰撞路径，不执行运动
-MUJOCO_GL=egl python3 src/lzt_cad_grasp_ros/scripts/run_industrial_cad_pick_place.py \
+MUJOCO_GL=egl python3 src/lzt_cad_grasp_ros/scripts/pipeline/run_industrial_cad_pick_place.py \
   --check-only
 
 # 无窗口完整执行并保存结果
-MUJOCO_GL=egl python3 src/lzt_cad_grasp_ros/scripts/run_industrial_cad_pick_place.py
+MUJOCO_GL=egl python3 src/lzt_cad_grasp_ros/scripts/pipeline/run_industrial_cad_pick_place.py
 
 # 打开 MuJoCo 窗口观察完整过程
-python3 src/lzt_cad_grasp_ros/scripts/run_industrial_cad_pick_place.py --viewer
+python3 src/lzt_cad_grasp_ros/scripts/pipeline/run_industrial_cad_pick_place.py --viewer
 ```
 
 未指定 `--output` 时，结果按对象、输入类型、执行模式、运行编号和随机种子保存，
@@ -376,11 +413,11 @@ source install/setup.bash
 
 # 只审核观测、抓取候选、IK 和碰撞路径
 MUJOCO_GL=egl python3 \
-  src/lzt_cad_grasp_ros/scripts/run_industrial_cad_grasp_focus.py --check-only
+  src/lzt_cad_grasp_ros/scripts/pipeline/run_industrial_cad_grasp_focus.py --check-only
 
 # 执行完整抓放并保存过程图片和 GIF
 MUJOCO_GL=egl python3 \
-  src/lzt_cad_grasp_ros/scripts/run_industrial_cad_grasp_focus.py
+  src/lzt_cad_grasp_ros/scripts/pipeline/run_industrial_cad_grasp_focus.py
 ```
 
 该入口仍将物料送至绿色区域中心，但验收不再使用精确放置位置和姿态容差。
@@ -397,7 +434,7 @@ MUJOCO_GL=egl python3 \
 cd /home/lzt/lzt_ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
-python3 src/lzt_cad_grasp_ros/scripts/run_tless_obj4_pipeline.py \
+python3 src/lzt_cad_grasp_ros/scripts/pipeline/run_tless_obj4_pipeline.py \
   --run-id system_baseline_v1 --seed 0
 ```
 
@@ -413,7 +450,7 @@ python3 src/lzt_cad_grasp_ros/scripts/run_tless_obj4_pipeline.py \
 
 ```bash
 # 1. 将同一仿真观测导出为单图 T-LESS BOP 输入
-MUJOCO_GL=egl python3 src/lzt_cad_grasp_ros/scripts/run_industrial_cad_pick_place.py \
+MUJOCO_GL=egl python3 src/lzt_cad_grasp_ros/scripts/pipeline/run_industrial_cad_pick_place.py \
   --image-width 720 --image-height 540 \
   --run-id capture_debug --seed 0 \
   --export-bop-root /home/lzt/lzt_ros2_ws/datasets/bop_mujoco_obj4 --check-only
@@ -423,31 +460,31 @@ cd /home/lzt/lzt_ros2_ws/src/lzt_cad_grasp_ros
 FPY=/home/lzt/lzt_ros2_ws/.envs/foundpose_gpu/bin/python
 BOP_PATH=/home/lzt/lzt_ros2_ws/datasets/bop_mujoco_obj4 \
 BOP_OUTPUT_PATH=$PWD/outputs/foundpose_bop19 PYOPENGL_PLATFORM=egl \
-  $FPY scripts/run_foundpose.py infer \
-  --opts-path config/foundpose_bop19/tless_mujoco_obj4_infer.json
+  $FPY scripts/pipeline/run_foundpose.py infer \
+  --opts-path lzt_perception/config/foundpose_bop19/tless_mujoco_obj4_infer.json
 
 # 3. 使用轮廓和深度门控 Top-K，再做不使用 GT 位姿的局部修正
 cd /home/lzt/lzt_ros2_ws
 export BOP_PATH=/home/lzt/lzt_ros2_ws/datasets/bop
-python3 src/lzt_cad_grasp_ros/scripts/gate_foundpose_topk.py \
+python3 src/lzt_cad_grasp_ros/scripts/perception/gate_foundpose_topk.py \
   --input src/lzt_cad_grasp_ros/outputs/foundpose_bop19/inference/tless_mujoco_obj4_gtmask_v1/4/estimated-poses.json \
-  --object-config src/lzt_cad_grasp_ros/config/objects/tless_000004.yaml \
+  --object-config src/lzt_cad_grasp_ros/lzt_description/config/objects/tless_000004.yaml \
   --detections datasets/bop_mujoco_obj4/gt-mask-detections.json \
   --dataset-root datasets/bop_mujoco_obj4/tless --mask-opening-kernel 1 \
   --output-dir src/lzt_cad_grasp_ros/outputs/pose_gating/tless_000004_mujoco_gtmask
-python3 src/lzt_cad_grasp_ros/scripts/refine_foundpose_poses.py \
+python3 src/lzt_cad_grasp_ros/scripts/perception/refine_foundpose_poses.py \
   --input src/lzt_cad_grasp_ros/outputs/pose_gating/tless_000004_mujoco_gtmask/gated-poses.json \
-  --object-config src/lzt_cad_grasp_ros/config/objects/tless_000004.yaml \
+  --object-config src/lzt_cad_grasp_ros/lzt_description/config/objects/tless_000004.yaml \
   --detections datasets/bop_mujoco_obj4/gt-mask-detections.json \
   --dataset-root datasets/bop_mujoco_obj4/tless --reweight-score \
   --output-dir src/lzt_cad_grasp_ros/outputs/pose_refinement/tless_000004_mujoco_gtmask
-python3 src/lzt_cad_grasp_ros/scripts/convert_foundpose_topk.py \
+python3 src/lzt_cad_grasp_ros/scripts/perception/convert_foundpose_topk.py \
   --input src/lzt_cad_grasp_ros/outputs/pose_refinement/tless_000004_mujoco_gtmask/refined-poses.json \
-  --object-config src/lzt_cad_grasp_ros/config/objects/tless_000004.yaml \
+  --object-config src/lzt_cad_grasp_ros/lzt_description/config/objects/tless_000004.yaml \
   --output src/lzt_cad_grasp_ros/outputs/pose_refinement/tless_000004_mujoco_gtmask/pose-hypotheses-refined.json
 
 # 4. 用预测位姿实际执行抓取、搬运和放置
-MUJOCO_GL=egl python3 src/lzt_cad_grasp_ros/scripts/run_industrial_cad_pick_place.py \
+MUJOCO_GL=egl python3 src/lzt_cad_grasp_ros/scripts/pipeline/run_industrial_cad_pick_place.py \
   --image-width 720 --image-height 540 \
   --pose-hypotheses src/lzt_cad_grasp_ros/outputs/pose_refinement/tless_000004_mujoco_gtmask/pose-hypotheses-refined.json \
   --run-id predicted_debug --seed 0
@@ -474,7 +511,7 @@ RGB-D 不一致候选，再从 PnP、CAD 轮廓、深度残差和组内一致性
 冻结模型位于：
 
 ```text
-config/reliability/tless_objects2_4_logistic_v2.json
+lzt_perception/config/reliability/tless_objects2_4_logistic_v2.json
 ```
 
 该模型仅使用 T-LESS 对象 2–4 的 MSSD 作为离线训练标签；运行时不读取真值。
@@ -488,7 +525,7 @@ Top-1 正确数分别为 151 和 205，即固定目标分母成功率从 10.64% 
 
 ```bash
 cd /home/lzt/lzt_ros2_ws/src/lzt_cad_grasp_ros
-python3 scripts/train_pose_reliability.py \
+python3 scripts/perception/train_pose_reliability.py \
   --audits outputs/pose_gating/tless_000002/audit.json \
            outputs/pose_gating/tless_000003/audit.json \
            outputs/pose_gating/tless_000004/audit.json \
@@ -498,9 +535,9 @@ python3 scripts/train_pose_reliability.py \
 运行一次完整创新流程：
 
 ```bash
-MUJOCO_GL=egl python3 scripts/run_tless_obj4_pipeline.py \
+MUJOCO_GL=egl python3 scripts/pipeline/run_tless_obj4_pipeline.py \
   --run-id innovation1_demo --seed 0 --grasp-focus \
-  --reliability-model config/reliability/tless_objects2_4_logistic_v2.json \
+  --reliability-model lzt_perception/config/reliability/tless_objects2_4_logistic_v2.json \
   --grasp-ranking cvar --cvar-tail-probability 0.25 --cvar-risk-weight 0.5
 ```
 
@@ -508,7 +545,7 @@ MUJOCO_GL=egl python3 scripts/run_tless_obj4_pipeline.py \
 图像和 FoundPose 原始 Top-K）：
 
 ```bash
-MUJOCO_GL=egl python3 scripts/run_innovation1_grasp_ablation.py \
+MUJOCO_GL=egl python3 scripts/evaluation/run_innovation1_grasp_ablation.py \
   --trials 20 --seed 300 \
   --output-dir outputs/grasp_ablation/innovation1_paired_20_v1
 ```
@@ -524,10 +561,11 @@ MUJOCO_GL=egl python3 scripts/run_innovation1_grasp_ablation.py \
 ```bash
 cd /home/lzt/lzt_ros2_ws
 source /opt/ros/humble/setup.bash
-colcon build --symlink-install --packages-select lzt_cad_grasp_ros
+colcon build --symlink-install --packages-up-to lzt_cad_grasp_ros lzt_system_tests
 source install/setup.bash
-colcon test --packages-select lzt_cad_grasp_ros
+colcon test --packages-select lzt_cad_grasp_ros lzt_system_tests
 colcon test-result --verbose
+ros2 run lzt_examples show_robot_stack
 ros2 run lzt_cad_grasp_ros cad_grasp_exploration_node
 ```
 
@@ -536,14 +574,14 @@ ros2 run lzt_cad_grasp_ros cad_grasp_exploration_node
 ## 后续实现顺序
 
 1. 用独立 MuJoCo/真实工作站校准集修正 T-LESS 概率的跨域偏差，冻结主动拒绝阈值；
-2. 对对象 2–4 全量运行 CAD/RGB-D 位姿修正，并用固定分母与官方 BOP 指标确认
-   MSSD 改善是否能保持，同时处理 MSPD 权衡；
+2. 将已验证的 mode-aware 位姿路径接入通用端到端流水线，并将模式级协方差
+   直接输入 CVaR 抓取排序；
 3. 用对象 8–10 冻结集验证 RGB-D mask 修正，另行运行改进 mask 下的 FoundPose；
 4. 将通过审计的 Top-K 门控扩展到对象 5–10，并形成 Best-1/原始 Top-K/门控
    Top-K 对照；
 5. 将严格配对实验扩展到多 CAD 和每种方法至少 50 次，形成置信区间与失败分布；
 6. 实机手眼标定后替换仿真外参，验证真实工作空间、IK 和碰撞检查；
-7. 扩展 ROBI 与多工业 CAD 实验，再决定何时恢复对象 20–30 的标准模板任务。
+7. 完成 T-LESS 1–30 同配置全量评价，扩展 ROBI 与多工业 CAD 实验。
 
 具体选择与操作边界见 `docs/FOUNDPOSE_BASELINE.md`，新增位姿修正与机器人约束链
 见 `docs/POSE_REFINEMENT_AND_ROBOT_CONSTRAINTS.md`。

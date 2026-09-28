@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>lzt_bringup</name><version>0.2.0</version>
+  <description>ROS launch, configuration and system composition.</description>
+  <maintainer email="lzt@todo.todo">lzt</maintainer><license>Apache-2.0</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <depend>launch</depend><depend>launch_ros</depend><depend>rclpy</depend><depend>std_msgs</depend>
+  <depend>lzt_common</depend><depend>lzt_control</depend><depend>lzt_description</depend><depend>lzt_grasp_planning</depend><depend>lzt_kinematics</depend><depend>lzt_motion_planning</depend><depend>lzt_mujoco</depend><depend>lzt_perception</depend><depend>lzt_trajectory</depend>
+  <test_depend>python3-pytest</test_depend><export><build_type>ament_python</build_type></export>
+</package>
+

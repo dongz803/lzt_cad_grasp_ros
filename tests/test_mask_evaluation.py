@@ -9,7 +9,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from lzt_cad_grasp_core.mask_evaluation import (  # noqa: E402
+from lzt_perception.mask_evaluation import (  # noqa: E402
     decode_coco_rle,
     evaluate_bop_mask_sources,
     mask_pair_metrics,
@@ -229,7 +229,7 @@ def test_pose_summary_uses_best_hypothesis_and_common_denominator(
 
 
 def test_gt_mask_inference_config_is_isolated_from_cnos_results() -> None:
-    config_root = PROJECT_ROOT / "config/foundpose_bop19"
+    config_root = PROJECT_ROOT / "lzt_perception/config/foundpose_bop19"
     cnos = json.loads((config_root / "tless_infer.json").read_text())["infer_opts"]
     gt = json.loads((config_root / "tless_infer_gt.json").read_text())["infer_opts"]
     assert cnos["use_detections"] is True

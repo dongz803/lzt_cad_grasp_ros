@@ -1,0 +1,8 @@
+string[] joint_names
+float64[] start_positions_rad
+float64[] goal_positions_rad
+---
+bool success
+lzt_interfaces/JointPath path
+string message
+

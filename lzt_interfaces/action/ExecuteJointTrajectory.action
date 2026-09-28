@@ -1,0 +1,7 @@
+trajectory_msgs/JointTrajectory trajectory
+---
+bool success
+string message
+---
+float32 progress
+

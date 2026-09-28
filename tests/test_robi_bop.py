@@ -9,7 +9,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from lzt_cad_grasp_core.robi_bop import (  # noqa: E402
+from lzt_benchmark.robi_bop import (  # noqa: E402
     REALSENSE_DEPTH,
     convert_robi_realsense_to_bop,
     load_robi_pose,

@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CONFIG_ROOT = PROJECT_ROOT / "config" / "foundpose_smoke"
+CONFIG_ROOT = PROJECT_ROOT / "lzt_perception" / "config" / "foundpose_smoke"
 
 
 def load_options(filename: str, key: str) -> dict:
@@ -26,8 +26,13 @@ def test_foundpose_smoke_configs_use_one_consistent_tless_object() -> None:
 
 
 def test_foundpose_helpers_are_valid_python() -> None:
-    for filename in ("prepare_tless_smoke.py", "run_foundpose.py"):
-        source = (PROJECT_ROOT / "scripts" / filename).read_text(encoding="utf-8")
+    script_paths = (
+        "scripts/datasets/prepare_tless_smoke.py",
+        "scripts/pipeline/run_foundpose.py",
+    )
+    for relative_path in script_paths:
+        source = (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
+        filename = Path(relative_path).name
         ast.parse(source, filename=filename)
 
 
@@ -36,11 +41,11 @@ def test_foundpose_inference_uses_configured_representation_version() -> None:
     patch = (
         PROJECT_ROOT / "third_party" / "patches" / patch_name
     ).read_text(encoding="utf-8")
-    fetch_source = (PROJECT_ROOT / "scripts" / "fetch_foundpose_raw.py").read_text(
+    fetch_source = (PROJECT_ROOT / "scripts/bootstrap/fetch_foundpose_raw.py").read_text(
         encoding="utf-8"
     )
     freeze_source = (
-        PROJECT_ROOT / "scripts" / "freeze_foundpose_baseline.py"
+        PROJECT_ROOT / "scripts/evaluation/freeze_foundpose_baseline.py"
     ).read_text(encoding="utf-8")
 
     assert "-            base_repre_dir, opts.version," in patch
