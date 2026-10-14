@@ -188,6 +188,12 @@ def main() -> None:
     parser.add_argument("--robot-min", type=float, nargs=3)
     parser.add_argument("--robot-max", type=float, nargs=3)
     parser.add_argument("--robot-camera-transform", type=Path)
+    parser.add_argument(
+        "--hard-minimum-positive-model-fraction", type=float, default=0.50
+    )
+    parser.add_argument(
+        "--minimum-positive-model-fraction", type=float, default=0.95
+    )
     parser.add_argument("--minimum-pnp-inliers", type=int, default=6)
     parser.add_argument("--minimum-pnp-score", type=float, default=0.05)
     parser.add_argument("--minimum-silhouette-iou", type=float, default=0.05)
@@ -217,6 +223,10 @@ def main() -> None:
     os.environ.setdefault("BOP_PATH", str(args.dataset_root.resolve().parent))
     object_config = load_object_config(args.object_config)
     settings = PoseGateConfig(
+        hard_minimum_positive_model_fraction=(
+            args.hard_minimum_positive_model_fraction
+        ),
+        minimum_positive_model_fraction=args.minimum_positive_model_fraction,
         camera_min_xyz_m=tuple(args.camera_min),
         camera_max_xyz_m=tuple(args.camera_max),
         robot_min_xyz_m=(

@@ -69,6 +69,69 @@ def test_pipeline_run_id_rejects_path_components() -> None:
         script._safe_run_id("../shared-result")
 
 
+def test_mode_aware_pipeline_wires_predictive_covariance_and_mode_output(
+    tmp_path: Path,
+) -> None:
+    script = _load_script("run_tless_obj4_pipeline.py")
+    model = tmp_path / "reliability.json"
+    covariance = tmp_path / "covariance.json"
+    command = script._build_refine_command(
+        python_executable="python3",
+        input_path=tmp_path / "gated-poses.json",
+        object_config=tmp_path / "object.yaml",
+        detections=tmp_path / "detections.json",
+        dataset_root=tmp_path / "tless",
+        output_dir=tmp_path / "refinement",
+        reliability_model=model,
+        gate_audit=tmp_path / "audit.json",
+        mode_aware=True,
+        predictive_covariance_model=covariance,
+        mode_translation_threshold_m=0.03,
+        mode_rotation_threshold_deg=15.0,
+        mode_continuous_symmetry_samples=360,
+    )
+
+    assert "--mode-aware" in command
+    assert command[command.index("--reliability-model") + 1] == str(model)
+    assert command[command.index("--predictive-covariance-model") + 1] == str(
+        covariance
+    )
+    assert script._execution_pose_path(
+        tmp_path / "refinement", True
+    ).name == "pose-modes-refined.json"
+
+
+def test_predictive_covariance_requires_mode_aware_pipeline(tmp_path: Path) -> None:
+    script = _load_script("run_tless_obj4_pipeline.py")
+
+    with pytest.raises(ValueError, match="requires mode-aware"):
+        script._build_refine_command(
+            python_executable="python3",
+            input_path=tmp_path / "gated-poses.json",
+            object_config=tmp_path / "object.yaml",
+            detections=tmp_path / "detections.json",
+            dataset_root=tmp_path / "tless",
+            output_dir=tmp_path / "refinement",
+            reliability_model=None,
+            gate_audit=None,
+            mode_aware=False,
+            predictive_covariance_model=tmp_path / "covariance.json",
+            mode_translation_threshold_m=0.03,
+            mode_rotation_threshold_deg=15.0,
+            mode_continuous_symmetry_samples=360,
+        )
+
+
+def test_legacy_reuse_manifest_error_is_actionable(tmp_path: Path) -> None:
+    script = _load_script("run_tless_obj4_pipeline.py")
+    manifest = {"run_id": "legacy", "random_seed": 0}
+
+    with pytest.raises(ValueError, match="predates initial XY/yaw tracking"):
+        script._validate_reused_initial_condition(
+            manifest, (-0.2, -0.12), 0.0
+        )
+
+
 def test_grasp_focus_output_isolated_from_precise_placement(tmp_path: Path) -> None:
     script = _load_script("run_industrial_cad_pick_place.py")
     script.PROJECT_ROOT = tmp_path
@@ -151,6 +214,41 @@ def test_active_risk_rejection_reports_each_failed_threshold() -> None:
         "low_pose_set_reliability",
         "high_cvar_failure_risk",
     ]
+
+
+def test_pick_place_loader_accepts_pose_modes_with_per_mode_covariance() -> None:
+    script = _load_script("run_industrial_cad_pick_place.py")
+    low = np.eye(6) * 1e-6
+    high = np.eye(6) * 1e-3
+    raw = {
+        "object_id": "part_a",
+        "scene_id": 1,
+        "image_id": 2,
+        "instance_id": 0,
+        "reliability": 0.75,
+        "uncertainty_method": "predictive_plus_dispersion",
+        "modes": [
+            {
+                "mode_id": 0,
+                "weight": 0.7,
+                "transform_camera_object": np.eye(4).tolist(),
+                "covariance_se3": low.tolist(),
+            },
+            {
+                "mode_id": 1,
+                "weight": 0.3,
+                "transform_camera_object": np.eye(4).tolist(),
+                "covariance_se3": high.tolist(),
+            },
+        ],
+    }
+
+    pose_set = script._pose_set_from_dict(raw)
+
+    assert pose_set.reliability == pytest.approx(0.75)
+    assert len(pose_set.hypotheses) == 2
+    np.testing.assert_allclose(pose_set.hypotheses[0].covariance_se3, low)
+    np.testing.assert_allclose(pose_set.hypotheses[1].covariance_se3, high)
 
 
 def test_reliability_evaluation_counts_missing_bop_targets(tmp_path: Path) -> None:

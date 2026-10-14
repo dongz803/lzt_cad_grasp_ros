@@ -18,8 +18,6 @@ import numpy as np
 FEATURE_NAMES = (
     "pnp_score",
     "log1p_pnp_inliers",
-    "positive_model_fraction",
-    "projected_model_fraction",
     "silhouette_iou",
     "silhouette_boundary_f1",
     "absolute_log_area_ratio",
@@ -110,8 +108,6 @@ def pose_reliability_features(
         [
             pnp_score,
             np.log1p(max(_finite(metrics.get("pnp_inliers")), 0.0)),
-            _unit(metrics.get("positive_model_fraction")),
-            _unit(metrics.get("projected_model_fraction")),
             _unit(metrics.get("silhouette_iou")),
             _unit(metrics.get("silhouette_boundary_f1")),
             min(abs(float(np.log((rendered_pixels + 1.0) / (observed_pixels + 1.0)))), 10.0),
@@ -252,7 +248,14 @@ def fit_pose_reliability_model(
 
     mean = np.mean(values, axis=0)
     scale = np.std(values, axis=0)
-    scale = np.where(scale < 1e-9, 1.0, scale)
+    constant_features = [
+        name for name, value in zip(FEATURE_NAMES, scale) if value < 1e-6
+    ]
+    if constant_features:
+        raise ValueError(
+            "training features contain constant dimensions: "
+            + ", ".join(constant_features)
+        )
     standardized = (values - mean) / scale
     design = np.column_stack((np.ones(len(values)), standardized))
     sample_weight = (

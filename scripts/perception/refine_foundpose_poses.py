@@ -53,6 +53,9 @@ from lzt_perception.pose_reliability import (  # noqa: E402
     PoseReliabilityModel,
     pose_reliability_features,
 )
+from lzt_perception.pose_uncertainty import (  # noqa: E402
+    PredictivePoseCovarianceModel,
+)
 
 
 STALE_GT_FIELDS = (
@@ -281,6 +284,14 @@ def main() -> None:
         help="frozen model used to recalibrate reliability after refinement",
     )
     parser.add_argument(
+        "--predictive-covariance-model",
+        type=Path,
+        help=(
+            "frozen GT-calibrated covariance added to within-mode dispersion; "
+            "requires --mode-aware"
+        ),
+    )
+    parser.add_argument(
         "--gate-audit",
         type=Path,
         help="gate audit retaining rejected candidates for group-relative features",
@@ -294,6 +305,8 @@ def main() -> None:
         raise SystemExit(
             "--reweight-score cannot be combined with reliability recalibration"
         )
+    if args.predictive_covariance_model is not None and not args.mode_aware:
+        raise SystemExit("--predictive-covariance-model requires --mode-aware")
     if args.progress_every < 0:
         raise SystemExit("--progress-every must be non-negative")
 
@@ -342,6 +355,21 @@ def main() -> None:
         if args.reliability_model is None
         else PoseReliabilityModel.load(args.reliability_model)
     )
+    predictive_model = (
+        None
+        if args.predictive_covariance_model is None
+        else PredictivePoseCovarianceModel.load(args.predictive_covariance_model)
+    )
+    try:
+        predictive_covariance = (
+            None
+            if predictive_model is None
+            else predictive_model.covariance_for(
+                object_config.cad_object.object_id
+            )
+        )
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     gate_payload = None if args.gate_audit is None else _load_json(args.gate_audit)
     gate_candidates: list[dict[str, Any]] = []
     post_gate_settings = PoseGateConfig()
@@ -417,7 +445,12 @@ def main() -> None:
                 candidates, object_config.cad_object.object_id
             )
             initial_mixture = cluster_pose_hypotheses(
-                hypothesis_set, object_config.cad_object, mode_settings
+                hypothesis_set,
+                object_config.cad_object,
+                mode_settings,
+                confidence_is_calibrated_probability=(
+                    reliability_model is not None
+                ),
             )
             mode_refinement = refine_pose_mixture_rgbd(
                 hypothesis_set,
@@ -664,7 +697,16 @@ def main() -> None:
             )
             refined_mixtures.append(
                 cluster_pose_hypotheses(
-                    refined_set, object_config.cad_object, mode_settings
+                    refined_set,
+                    object_config.cad_object,
+                    mode_settings,
+                    predictive_covariance_se3=predictive_covariance,
+                    predictive_uncertainty_method=(
+                        None if predictive_model is None else predictive_model.method
+                    ),
+                    confidence_is_calibrated_probability=(
+                        reliability_model is not None
+                    ),
                 )
             )
 
@@ -733,6 +775,18 @@ def main() -> None:
                     args.reliability_model.read_bytes()
                 ).hexdigest(),
                 "ground_truth_used_at_runtime": False,
+            }
+        ),
+        "predictive_covariance_model": (
+            None
+            if args.predictive_covariance_model is None
+            else {
+                "path": str(args.predictive_covariance_model.resolve()),
+                "sha256": hashlib.sha256(
+                    args.predictive_covariance_model.read_bytes()
+                ).hexdigest(),
+                "conditional_on": predictive_model.conditional_on,
+                "object_ids": list(predictive_model.object_ids),
             }
         ),
         "gate_audit": (

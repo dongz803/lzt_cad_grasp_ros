@@ -22,6 +22,7 @@ class PoseGateConfig:
     """
 
     minimum_depth_m: float = 0.05
+    hard_minimum_positive_model_fraction: float = 0.50
     minimum_positive_model_fraction: float = 0.95
     camera_min_xyz_m: tuple[float, float, float] = (-1.0, -1.0, 0.05)
     camera_max_xyz_m: tuple[float, float, float] = (1.0, 1.0, 2.0)
@@ -41,8 +42,16 @@ class PoseGateConfig:
     def __post_init__(self) -> None:
         if self.minimum_depth_m <= 0.0:
             raise ValueError("minimum_depth_m must be positive")
-        if not 0.0 <= self.minimum_positive_model_fraction <= 1.0:
-            raise ValueError("minimum_positive_model_fraction must lie in [0, 1]")
+        if not (
+            0.0
+            <= self.hard_minimum_positive_model_fraction
+            <= self.minimum_positive_model_fraction
+            <= 1.0
+        ):
+            raise ValueError(
+                "positive-model fractions must lie in [0, 1] and the hard "
+                "minimum must not exceed the soft reference"
+            )
         camera_min = np.asarray(self.camera_min_xyz_m, dtype=np.float64)
         camera_max = np.asarray(self.camera_max_xyz_m, dtype=np.float64)
         if camera_min.shape != (3,) or camera_max.shape != (3,):
@@ -393,8 +402,10 @@ def evaluate_pose_candidate(
         minimum_depth_m=settings.minimum_depth_m,
     )
     positive_fraction = float(projection["positive_model_fraction"])
-    if positive_fraction < settings.minimum_positive_model_fraction:
+    if positive_fraction < settings.hard_minimum_positive_model_fraction:
         hard_reasons.append("model_behind_camera")
+    elif positive_fraction < settings.minimum_positive_model_fraction:
+        soft_flags.append("low_positive_model_fraction")
 
     pair = mask_pair_metrics(silhouette, mask)
     silhouette_iou = float(pair["iou"])
@@ -441,8 +452,28 @@ def evaluate_pose_candidate(
         median_depth_error, settings.maximum_median_depth_error_m
     )
     depth_inlier_quality = float(np.clip(depth_inlier_fraction, 0.0, 1.0))
+    positive_fraction_span = (
+        settings.minimum_positive_model_fraction
+        - settings.hard_minimum_positive_model_fraction
+    )
+    positive_model_quality = (
+        1.0
+        if positive_fraction_span <= 1e-12
+        else float(
+            np.clip(
+                (
+                    positive_fraction
+                    - settings.hard_minimum_positive_model_fraction
+                )
+                / positive_fraction_span,
+                0.0,
+                1.0,
+            )
+        )
+    )
     quality_terms = np.asarray(
         [
+            positive_model_quality,
             pnp_inlier_quality,
             silhouette_quality,
             reprojection_quality,
@@ -494,6 +525,7 @@ def evaluate_pose_candidate(
         "depth_overlap_quality": depth_overlap_quality,
         "depth_error_quality": depth_error_quality,
         "depth_inlier_quality": depth_inlier_quality,
+        "positive_model_quality": positive_model_quality,
     }
     return PoseGateDecision(
         accepted=accepted,

@@ -266,11 +266,19 @@ def rank_task_grasps(
         [hypothesis.confidence for hypothesis in pose_set.hypotheses],
         dtype=np.float64,
     )
+    uses_calibrated_probability = (
+        scoring.confidence_is_calibrated_probability
+        or pose_set.reliability is not None
+    )
     # Compute absolute reliability before the zero-sum fallback used only to
     # obtain relative scenario weights.
     pose_set_reliability = (
-        float(np.max(confidences))
-        if scoring.confidence_is_calibrated_probability
+        (
+            float(pose_set.reliability)
+            if pose_set.reliability is not None
+            else float(np.max(confidences))
+        )
+        if uses_calibrated_probability
         else 1.0
     )
     if np.sum(confidences) <= 1e-12:
@@ -280,10 +288,6 @@ def rank_task_grasps(
     # calibrated correctness probabilities, preserve the absolute chance that
     # no retained pose is reliable.  ``max`` is a conservative group proxy for
     # strongly correlated Top-K pose events.
-    covariance = pose_set.covariance_se3
-    if covariance is None:
-        covariance = pose_set.hypotheses[0].covariance_se3
-
     ranked = []
     for candidate in grasp_candidates:
         place = (
@@ -293,6 +297,9 @@ def rank_task_grasps(
         hypothesis_evaluations = []
         feasibility_terms = []
         travel_terms = []
+        scenario_success_terms = []
+        uncertainty_terms = []
+        uncertainty_measurements = []
         for weight, hypothesis in zip(weights, pose_set.hypotheses):
             world_object = world_camera @ hypothesis.transform_camera_object
             pick = world_object @ candidate.transform_object_grasp
@@ -306,6 +313,63 @@ def rank_task_grasps(
             travel_terms.append(
                 weight * np.exp(-travel_distance / scoring.travel_reference_m)
             )
+            covariance = (
+                hypothesis.covariance_se3
+                if hypothesis.covariance_se3 is not None
+                else pose_set.covariance_se3
+            )
+            if covariance is None:
+                scenario_uncertainty_success = scoring.missing_uncertainty_penalty
+            else:
+                measurement = _propagated_uncertainty(
+                    covariance,
+                    world_camera,
+                    hypothesis.transform_camera_object,
+                    candidate.transform_object_grasp[:3, 3],
+                )
+                uncertainty_measurements.append(measurement)
+                (
+                    current_pick_position_std,
+                    current_pick_angle_std,
+                    current_place_position_std,
+                    current_place_angle_std,
+                ) = measurement
+                tolerance_scores = [
+                    _tolerance_score(
+                        current_pick_position_std,
+                        scoring.pick_position_tolerance_m,
+                        scoring.risk_sigma,
+                    ),
+                    _tolerance_score(
+                        np.radians(current_pick_angle_std),
+                        np.radians(scoring.pick_angle_tolerance_deg),
+                        scoring.risk_sigma,
+                    ),
+                ]
+                if scoring.include_place_uncertainty:
+                    tolerance_scores.extend(
+                        [
+                            _tolerance_score(
+                                current_place_position_std,
+                                task.position_tolerance_m,
+                                scoring.risk_sigma,
+                            ),
+                            _tolerance_score(
+                                np.radians(current_place_angle_std),
+                                np.radians(task.angle_tolerance_deg),
+                                scoring.risk_sigma,
+                            ),
+                        ]
+                    )
+                scenario_uncertainty_success = float(
+                    np.prod(tolerance_scores)
+                )
+            uncertainty_terms.append(weight * scenario_uncertainty_success)
+            scenario_success_terms.append(
+                constraints.normalized_margin
+                * float(constraints.feasible)
+                * scenario_uncertainty_success
+            )
             hypothesis_evaluations.append(
                 HypothesisTaskEvaluation(
                     hypothesis_id=hypothesis.hypothesis_id,
@@ -316,71 +380,34 @@ def rank_task_grasps(
                 )
             )
 
-        uncertainty_available = covariance is not None
-        if covariance is None:
-            uncertainty_success = scoring.missing_uncertainty_penalty
+        uncertainty_available = (
+            len(uncertainty_measurements) == len(pose_set.hypotheses)
+        )
+        uncertainty_success = float(np.sum(uncertainty_terms))
+        if not uncertainty_measurements:
             pick_position_std = None
             pick_angle_std = None
             place_position_std = None
             place_angle_std = None
         else:
-            (
-                pick_position_std,
-                pick_angle_std,
-                place_position_std,
-                place_angle_std,
-            ) = _propagated_uncertainty(
-                covariance,
-                world_camera,
-                pose_set.hypotheses[0].transform_camera_object,
-                candidate.transform_object_grasp[:3, 3],
-            )
-            scores = [
-                _tolerance_score(
-                    pick_position_std,
-                    scoring.pick_position_tolerance_m,
-                    scoring.risk_sigma,
-                ),
-                _tolerance_score(
-                    np.radians(pick_angle_std),
-                    np.radians(scoring.pick_angle_tolerance_deg),
-                    scoring.risk_sigma,
-                ),
-            ]
-            if scoring.include_place_uncertainty:
-                scores.extend(
-                    [
-                        _tolerance_score(
-                            place_position_std,
-                            task.position_tolerance_m,
-                            scoring.risk_sigma,
-                        ),
-                        _tolerance_score(
-                            np.radians(place_angle_std),
-                            np.radians(task.angle_tolerance_deg),
-                            scoring.risk_sigma,
-                        ),
-                    ]
-                )
-            uncertainty_success = float(np.prod(scores))
+            measurements = np.asarray(uncertainty_measurements, dtype=np.float64)
+            pick_position_std = float(np.max(measurements[:, 0]))
+            pick_angle_std = float(np.max(measurements[:, 1]))
+            place_position_std = float(np.max(measurements[:, 2]))
+            place_angle_std = float(np.max(measurements[:, 3]))
 
         feasible_mass = float(np.sum(feasibility_terms))
-        scenario_success = np.asarray(
-            [
-                evaluation.constraints.normalized_margin
-                * float(evaluation.constraints.feasible)
-                for evaluation in hypothesis_evaluations
-            ],
-            dtype=np.float64,
+        scenario_success = np.asarray(scenario_success_terms, dtype=np.float64)
+        expected_task_success = pose_set_reliability * float(
+            np.sum(weights * scenario_success)
         )
         scenario_weights = weights
-        if scoring.confidence_is_calibrated_probability:
+        if uses_calibrated_probability:
             scenario_success = np.r_[scenario_success, 0.0]
             scenario_weights = np.r_[
                 weights * pose_set_reliability,
                 1.0 - pose_set_reliability,
             ]
-        expected_task_success = pose_set_reliability * feasible_mass
         cvar_failure_risk = weighted_cvar(
             1.0 - scenario_success,
             scenario_weights,
@@ -398,7 +425,7 @@ def rank_task_grasps(
         )
         robust_score = float(
             np.clip(
-                risk_adjusted_success * uncertainty_success * preference_score,
+                risk_adjusted_success * preference_score,
                 0.0,
                 1.0,
             )

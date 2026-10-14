@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 
 import numpy as np
+import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -204,3 +205,44 @@ def test_cvar_ranking_prefers_candidate_without_tail_failure() -> None:
     )
     assert np.isclose(risky.cvar_failure_risk, 0.8)
     assert np.isclose(risky.tail_task_success, 0.2)
+
+
+def test_each_pose_mode_uses_its_own_covariance_in_tail_risk() -> None:
+    certain = np.zeros((6, 6))
+    uncertain = np.zeros((6, 6))
+    uncertain[0, 0] = 0.05 ** 2
+    modes = PoseHypothesisSet(
+        object_id="part",
+        scene_id=1,
+        image_id=2,
+        instance_id=0,
+        hypotheses=(
+            PoseHypothesis(
+                transform((0.0, 0.0, 0.5)),
+                0.8,
+                covariance_se3=certain,
+                hypothesis_id=0,
+            ),
+            PoseHypothesis(
+                transform((0.01, 0.0, 0.5)),
+                0.2,
+                covariance_se3=uncertain,
+                hypothesis_id=1,
+            ),
+        ),
+        reliability=0.9,
+    )
+    result = rank_task_grasps(
+        modes,
+        [candidate("only", (0.0, 0.0, 0.0))],
+        task(),
+        np.eye(4),
+        config=RobustScoringConfig(
+            cvar_tail_probability=0.25,
+        ),
+    )[0]
+
+    assert result.pose_set_reliability == 0.9
+    assert result.expected_task_success < 0.9
+    assert result.cvar_failure_risk > 0.4
+    assert result.pick_position_std_m == pytest.approx(0.05)

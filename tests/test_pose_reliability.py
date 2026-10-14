@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 
 import numpy as np
+import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -85,7 +86,7 @@ def test_probability_metrics_reward_calibrated_separation() -> None:
 def test_frozen_cross_cad_model_is_loadable_without_outputs() -> None:
     path = (
         PROJECT_ROOT
-        / "lzt_perception/config/reliability/tless_objects2_4_logistic_v2.json"
+        / "lzt_perception/config/reliability/tless_objects2_4_logistic_v3.json"
     )
     model = PoseReliabilityModel.load(path)
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -96,3 +97,37 @@ def test_frozen_cross_cad_model_is_loadable_without_outputs() -> None:
     assert payload["training"]["fixed_bop_target_instances"] == 1419
     probability = float(model.predict_proba(np.zeros(len(FEATURE_NAMES))))
     assert 0.0 <= probability <= 1.0
+
+
+def test_v3_pruning_exactly_preserves_v2_predictions() -> None:
+    v2_path = (
+        PROJECT_ROOT
+        / "lzt_perception/config/reliability/tless_objects2_4_logistic_v2.json"
+    )
+    v3_path = (
+        PROJECT_ROOT
+        / "lzt_perception/config/reliability/tless_objects2_4_logistic_v3.json"
+    )
+    v2 = json.loads(v2_path.read_text(encoding="utf-8"))
+    v3 = PoseReliabilityModel.load(v3_path)
+    rng = np.random.default_rng(7)
+    features_v3 = rng.normal(size=(20, len(FEATURE_NAMES)))
+    features_v2 = np.insert(features_v3, 2, 1.0, axis=1)
+    features_v2 = np.insert(features_v2, 3, 1.0, axis=1)
+    mean = np.asarray(v2["feature_mean"], dtype=np.float64)
+    scale = np.asarray(v2["feature_scale"], dtype=np.float64)
+    coefficients = np.asarray(v2["coefficients"], dtype=np.float64)
+    logits = ((features_v2 - mean) / scale) @ coefficients + v2["intercept"]
+    expected = 1.0 / (1.0 + np.exp(-np.clip(logits, -40.0, 40.0)))
+
+    np.testing.assert_allclose(v3.predict_proba(features_v3), expected)
+
+
+def test_training_rejects_constant_feature_dimensions() -> None:
+    rng = np.random.default_rng(3)
+    features = rng.normal(size=(20, len(FEATURE_NAMES)))
+    features[:, 0] = 1.0
+    labels = np.r_[np.zeros(10), np.ones(10)]
+
+    with pytest.raises(ValueError, match="pnp_score"):
+        fit_pose_reliability_model(features, labels)

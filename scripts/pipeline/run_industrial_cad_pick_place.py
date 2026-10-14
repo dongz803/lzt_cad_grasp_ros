@@ -315,28 +315,48 @@ def _pose_set_from_dict(raw: dict[str, Any]):
         if covariance_raw is None
         else np.asarray(covariance_raw, dtype=np.float64)
     )
-    hypotheses = tuple(
-        PoseHypothesis(
-            transform_camera_object=np.asarray(
-                item["transform_camera_object"], dtype=np.float64
-            ),
-            confidence=float(item["confidence"]),
-            symmetry_class=str(item.get("symmetry_class", "identity")),
-            covariance_se3=covariance,
-            source=str(item.get("source", "unknown")),
-            hypothesis_id=int(item.get("hypothesis_id", index)),
+    source_items = raw.get("modes", raw.get("hypotheses"))
+    if not source_items:
+        raise ValueError("pose set must contain hypotheses or modes")
+    is_mixture = "modes" in raw
+    hypotheses = []
+    for index, item in enumerate(source_items):
+        item_covariance_raw = item.get("covariance_se3")
+        item_covariance = (
+            covariance
+            if item_covariance_raw is None
+            else np.asarray(item_covariance_raw, dtype=np.float64)
         )
-        for index, item in enumerate(raw["hypotheses"])
-    )
+        hypotheses.append(
+            PoseHypothesis(
+                transform_camera_object=np.asarray(
+                    item["transform_camera_object"], dtype=np.float64
+                ),
+                confidence=float(
+                    item["weight"] if is_mixture else item["confidence"]
+                ),
+                symmetry_class=str(item.get("symmetry_class", "mode")),
+                covariance_se3=item_covariance,
+                source=str(
+                    item.get("source", "pose_mode" if is_mixture else "unknown")
+                ),
+                hypothesis_id=int(
+                    item.get(
+                        "mode_id" if is_mixture else "hypothesis_id", index
+                    )
+                ),
+            )
+        )
     return PoseHypothesisSet(
         object_id=str(raw["object_id"]),
         scene_id=int(raw["scene_id"]),
         image_id=int(raw["image_id"]),
         instance_id=int(raw["instance_id"]),
-        hypotheses=hypotheses,
-        covariance_se3=covariance,
+        hypotheses=tuple(hypotheses),
+        covariance_se3=None if is_mixture else covariance,
         uncertainty_method=str(raw.get("uncertainty_method", "unavailable")),
         symmetry_discretization_deg=raw.get("symmetry_discretization_deg"),
+        reliability=raw.get("reliability"),
     )
 
 

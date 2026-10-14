@@ -27,6 +27,11 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKSPACE_ROOT = PROJECT_ROOT.parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+from official_eval_guard import (  # noqa: E402
+    require_official_eval_dependencies,
+)
+
 REFINE_SCRIPT = PROJECT_ROOT / "scripts/perception/refine_foundpose_poses.py"
 EVALUATE_SCRIPT = PROJECT_ROOT / "scripts/evaluation/evaluate_topk_coverage.py"
 DEFAULT_DETECTIONS = (
@@ -37,7 +42,12 @@ DEFAULT_DETECTIONS = (
 DEFAULT_RELIABILITY_MODEL = (
     PROJECT_ROOT
     / "lzt_perception/config/reliability/"
-    "tless_objects2_4_logistic_v2.json"
+    "tless_objects2_4_logistic_v3.json"
+)
+DEFAULT_PREDICTIVE_COVARIANCE_MODEL = (
+    PROJECT_ROOT
+    / "lzt_perception/config/uncertainty/"
+    "tless_objects2_4_predictive_v3.json"
 )
 DEFAULT_DATASET_ROOT = WORKSPACE_ROOT / "datasets/bop/tless"
 
@@ -87,6 +97,7 @@ def _refinement_command(
     dataset_root: Path,
     gate_audit: Path,
     reliability_model: Path,
+    predictive_covariance_model: Path | None,
     output_dir: Path,
     top_k: int,
     progress_every: int,
@@ -138,6 +149,13 @@ def _refinement_command(
                 str(mode_continuous_symmetry_samples),
             ]
         )
+        if predictive_covariance_model is not None:
+            command.extend(
+                [
+                    "--predictive-covariance-model",
+                    str(predictive_covariance_model),
+                ]
+            )
     return command
 
 
@@ -222,6 +240,11 @@ def main() -> None:
     parser.add_argument(
         "--reliability-model", type=Path, default=DEFAULT_RELIABILITY_MODEL
     )
+    parser.add_argument(
+        "--predictive-covariance-model",
+        type=Path,
+        default=DEFAULT_PREDICTIVE_COVARIANCE_MODEL,
+    )
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_DATASET_ROOT)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--top-k", type=int, default=5)
@@ -269,6 +292,7 @@ def main() -> None:
     required_files: dict[str, Path] = {
         "detections": args.detections,
         "reliability_model": args.reliability_model,
+        "predictive_covariance_model": args.predictive_covariance_model,
         "refinement_script": REFINE_SCRIPT,
         "evaluation_script": EVALUATE_SCRIPT,
     }
@@ -279,6 +303,10 @@ def main() -> None:
     _require_files(required_files)
     if not args.dataset_root.is_dir():
         raise SystemExit(f"dataset root is missing: {args.dataset_root}")
+
+    if args.run_official and not args.dry_run:
+        # Fail before any refinement instead of after the last stage.
+        require_official_eval_dependencies(project_root=PROJECT_ROOT)
 
     output_dir = args.output_dir.resolve()
     if output_dir.exists() and any(output_dir.iterdir()):
@@ -297,6 +325,9 @@ def main() -> None:
                 dataset_root=args.dataset_root.resolve(),
                 gate_audit=gate_audits[object_id].resolve(),
                 reliability_model=args.reliability_model.resolve(),
+                predictive_covariance_model=(
+                    args.predictive_covariance_model.resolve()
+                ),
                 output_dir=run_output,
                 top_k=args.top_k,
                 progress_every=args.progress_every,

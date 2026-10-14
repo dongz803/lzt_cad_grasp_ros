@@ -73,6 +73,7 @@ def test_mode_aware_command_changes_only_mode_configuration(tmp_path: Path) -> N
         dataset_root=tmp_path / "tless",
         gate_audit=tmp_path / "audit.json",
         reliability_model=tmp_path / "model.json",
+        predictive_covariance_model=tmp_path / "covariance.json",
         output_dir=tmp_path / "output",
         top_k=5,
         progress_every=50,
@@ -91,3 +92,5 @@ def test_mode_aware_command_changes_only_mode_configuration(tmp_path: Path) -> N
     assert "--mode-aware" in mode_aware
     assert "--reliability-model" in per_candidate
     assert "--gate-audit" in per_candidate
+    assert "--predictive-covariance-model" not in per_candidate
+    assert "--predictive-covariance-model" in mode_aware

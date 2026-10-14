@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "method": "symmetry_observable_gt_residual_second_moment_block_shrinkage",
+  "conditional_on": "refined mode is correct under diameter-normalized observable surface-displacement proxy threshold 0.1",
+  "object_ids": [
+    "tless_000002",
+    "tless_000003",
+    "tless_000004"
+  ],
+  "predictive_covariance_se3": [
+    [1.4560506796192987e-06, 1.854319507782032e-08, -5.967721046863062e-07, -2.659789147641219e-06, -3.824072870705875e-06, 0.0],
+    [1.8543195077820343e-08, 1.7237777028362376e-06, -3.732278852573774e-07, -2.697286209470414e-06, -2.180225798037123e-06, 0.0],
+    [-5.967721046863062e-07, -3.732278852573774e-07, 7.535279577212201e-06, 4.6084956864551225e-06, 1.209762467876413e-05, 0.0],
+    [-2.659789147641219e-06, -2.6972862094704136e-06, 4.6084956864551225e-06, 0.003212821875744746, 3.979943269655454e-05, 0.0],
+    [-3.824072870705875e-06, -2.180225798037123e-06, 1.209762467876413e-05, 3.979943269655451e-05, 0.0036308620136585464, 0.0],
+    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  ],
+  "observable_projector_se3": [
+    [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  ],
+  "training": {
+    "dataset": "T-LESS test_primesense",
+    "object_ids": [2, 3, 4],
+    "pose_stage": "mode-aware RGB-D/CAD refined",
+    "correctness_metric": "observable SE(3) surface-displacement proxy; not exact BOP MSSD",
+    "gt_matching": "one-to-one CNOS mask IoU",
+    "shrinkage": 0.1,
+    "translation_max_std_m": 0.00276,
+    "observable_rotation_max_std_deg": 3.45,
+    "loo_nominal_90_percent_coverage": {
+      "2": 0.9271,
+      "3": 0.9425,
+      "4": 0.7701
+    },
+    "limitation": "Object 4 is under-covered; use outside objects 2-4 is rejected."
+  }
+}

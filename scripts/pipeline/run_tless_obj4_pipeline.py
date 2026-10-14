@@ -108,6 +108,102 @@ def _run_stage(
     _write_json(manifest_path, manifest)
 
 
+def _build_refine_command(
+    *,
+    python_executable: str,
+    input_path: Path,
+    object_config: Path,
+    detections: Path,
+    dataset_root: Path,
+    output_dir: Path,
+    reliability_model: Path | None,
+    gate_audit: Path | None,
+    mode_aware: bool,
+    predictive_covariance_model: Path | None,
+    mode_translation_threshold_m: float,
+    mode_rotation_threshold_deg: float,
+    mode_continuous_symmetry_samples: int,
+) -> list[str]:
+    """Build the refinement stage without hiding the mode-aware contract."""
+
+    if (reliability_model is None) != (gate_audit is None):
+        raise ValueError(
+            "reliability_model and gate_audit must be provided together"
+        )
+    if predictive_covariance_model is not None and not mode_aware:
+        raise ValueError("predictive covariance requires mode-aware refinement")
+    command = [
+        python_executable,
+        str(PROJECT_ROOT / "scripts/perception/refine_foundpose_poses.py"),
+        "--input", str(input_path),
+        "--object-config", str(object_config),
+        "--detections", str(detections),
+        "--dataset-root", str(dataset_root),
+        "--output-dir", str(output_dir),
+    ]
+    if reliability_model is None:
+        command.append("--reweight-score")
+    else:
+        command.extend(
+            [
+                "--reliability-model", str(reliability_model),
+                "--gate-audit", str(gate_audit),
+            ]
+        )
+    if mode_aware:
+        command.extend(
+            [
+                "--mode-aware",
+                "--mode-translation-threshold-m",
+                str(mode_translation_threshold_m),
+                "--mode-rotation-threshold-deg",
+                str(mode_rotation_threshold_deg),
+                "--mode-continuous-symmetry-samples",
+                str(mode_continuous_symmetry_samples),
+            ]
+        )
+        if predictive_covariance_model is not None:
+            command.extend(
+                [
+                    "--predictive-covariance-model",
+                    str(predictive_covariance_model),
+                ]
+            )
+    return command
+
+
+def _execution_pose_path(refinement_dir: Path, mode_aware: bool) -> Path:
+    """Select candidate Top-K or final pose modes for downstream execution."""
+
+    return refinement_dir / (
+        "pose-modes-refined.json"
+        if mode_aware
+        else "pose-hypotheses-refined.json"
+    )
+
+
+def _validate_reused_initial_condition(
+    manifest: dict[str, Any],
+    initial_xy_m: tuple[float, float] | list[float],
+    initial_yaw_deg: float,
+) -> None:
+    """Reject legacy or mismatched captures before reusing their perception."""
+
+    reused_xy = manifest.get("initial_xy_m")
+    reused_yaw = manifest.get("initial_yaw_deg")
+    if reused_xy is None or reused_yaw is None:
+        raise ValueError(
+            "reused perception manifest predates initial XY/yaw tracking; "
+            "run one fresh capture before using --reuse-perception-run"
+        )
+    if not np.allclose(reused_xy, initial_xy_m, atol=1e-12) or not np.isclose(
+        float(reused_yaw), initial_yaw_deg, atol=1e-12
+    ):
+        raise ValueError(
+            "reused perception run does not match initial XY/yaw condition"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
@@ -130,6 +226,28 @@ def main() -> None:
         "--reliability-model",
         type=Path,
         help="enable innovation-1 calibrated Top-K reliability",
+    )
+    parser.add_argument(
+        "--mode-aware",
+        action="store_true",
+        help=(
+            "cluster symmetry-equivalent candidates, refine one center per "
+            "mode, recalibrate, regroup and execute from the final modes"
+        ),
+    )
+    parser.add_argument(
+        "--predictive-covariance-model",
+        type=Path,
+        help="frozen pose-error covariance model; requires --mode-aware",
+    )
+    parser.add_argument(
+        "--mode-translation-threshold-m", type=float, default=0.03
+    )
+    parser.add_argument(
+        "--mode-rotation-threshold-deg", type=float, default=15.0
+    )
+    parser.add_argument(
+        "--mode-continuous-symmetry-samples", type=int, default=360
     )
     parser.add_argument("--cvar-tail-probability", type=float, default=0.25)
     parser.add_argument("--cvar-risk-weight", type=float, default=0.5)
@@ -175,6 +293,24 @@ def main() -> None:
         raise SystemExit(f"FoundPose Python is missing: {args.foundpose_python}")
     if innovation1_enabled and not args.reliability_model.is_file():
         raise SystemExit(f"reliability model is missing: {args.reliability_model}")
+    if args.predictive_covariance_model is not None and not args.mode_aware:
+        raise SystemExit("--predictive-covariance-model requires --mode-aware")
+    if (
+        args.predictive_covariance_model is not None
+        and not args.predictive_covariance_model.is_file()
+    ):
+        raise SystemExit(
+            "predictive covariance model is missing: "
+            f"{args.predictive_covariance_model}"
+        )
+    if args.mode_translation_threshold_m <= 0.0:
+        raise SystemExit("--mode-translation-threshold-m must be positive")
+    if not 0.0 < args.mode_rotation_threshold_deg <= 180.0:
+        raise SystemExit(
+            "--mode-rotation-threshold-deg must lie in (0, 180]"
+        )
+    if args.mode_continuous_symmetry_samples < 2:
+        raise SystemExit("--mode-continuous-symmetry-samples must be at least 2")
     reuse_root = (
         None
         if args.reuse_perception_run is None
@@ -194,16 +330,12 @@ def main() -> None:
         reused_manifest = json.loads(
             reused_manifest_path.read_text(encoding="utf-8")
         )
-        if not np.allclose(
-            reused_manifest.get("initial_xy_m"), args.initial_xy_m, atol=1e-12
-        ) or not np.isclose(
-            float(reused_manifest.get("initial_yaw_deg")),
-            args.initial_yaw_deg,
-            atol=1e-12,
-        ):
-            raise SystemExit(
-                "reused perception run does not match initial XY/yaw condition"
+        try:
+            _validate_reused_initial_condition(
+                reused_manifest, args.initial_xy_m, args.initial_yaw_deg
             )
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
 
     object_config = PROJECT_ROOT / "lzt_description/config/objects/tless_000004.yaml"
     grasp_candidates = PROJECT_ROOT / "outputs/cad_grasps/tless_000004.json"
@@ -222,6 +354,11 @@ def main() -> None:
         shutil.copy2(
             args.reliability_model,
             snapshot_dir / "pose_reliability_model.json",
+        )
+    if args.predictive_covariance_model is not None:
+        shutil.copy2(
+            args.predictive_covariance_model,
+            snapshot_dir / "predictive_pose_covariance_model.json",
         )
     infer_payload = json.loads(base_infer_config.read_text(encoding="utf-8"))
     infer_version = f"mujoco_obj4_{run_id}_seed{args.seed}"
@@ -243,6 +380,14 @@ def main() -> None:
         "initial_yaw_deg": args.initial_yaw_deg,
         "grasp_focus": grasp_focus,
         "grasp_ranking": grasp_ranking,
+        "mode_aware": args.mode_aware,
+        "mode_clustering": {
+            "translation_threshold_m": args.mode_translation_threshold_m,
+            "rotation_threshold_deg": args.mode_rotation_threshold_deg,
+            "continuous_symmetry_samples": (
+                args.mode_continuous_symmetry_samples
+            ),
+        },
         "risk_configuration": {
             "cvar_tail_probability": args.cvar_tail_probability,
             "cvar_risk_weight": args.cvar_risk_weight,
@@ -270,6 +415,13 @@ def main() -> None:
                 None
                 if not innovation1_enabled
                 else str(snapshot_dir / "pose_reliability_model.json")
+            ),
+            "predictive_covariance_model": (
+                None
+                if args.predictive_covariance_model is None
+                else str(
+                    snapshot_dir / "predictive_pose_covariance_model.json"
+                )
             ),
             "reused_perception_run": (
                 None if reuse_root is None else str(reuse_root)
@@ -379,26 +531,31 @@ def main() -> None:
         manifest=manifest, manifest_path=manifest_path,
     )
 
-    refine_command = [
-        sys.executable,
-        str(PROJECT_ROOT / "scripts/perception/refine_foundpose_poses.py"),
-        "--input", str(gate_dir / "gated-poses.json"),
-        "--object-config", str(object_config),
-        "--detections", str(detections),
-        "--dataset-root", str(dataset_root),
-        "--output-dir", str(refinement_dir),
-    ]
-    if innovation1_enabled:
-        refine_command.extend(
-            [
-                "--reliability-model",
-                str(snapshot_dir / "pose_reliability_model.json"),
-                "--gate-audit",
-                str(gate_dir / "audit.json"),
-            ]
-        )
-    else:
-        refine_command.append("--reweight-score")
+    refine_command = _build_refine_command(
+        python_executable=sys.executable,
+        input_path=gate_dir / "gated-poses.json",
+        object_config=object_config,
+        detections=detections,
+        dataset_root=dataset_root,
+        output_dir=refinement_dir,
+        reliability_model=(
+            snapshot_dir / "pose_reliability_model.json"
+            if innovation1_enabled
+            else None
+        ),
+        gate_audit=gate_dir / "audit.json" if innovation1_enabled else None,
+        mode_aware=args.mode_aware,
+        predictive_covariance_model=(
+            snapshot_dir / "predictive_pose_covariance_model.json"
+            if args.predictive_covariance_model is not None
+            else None
+        ),
+        mode_translation_threshold_m=args.mode_translation_threshold_m,
+        mode_rotation_threshold_deg=args.mode_rotation_threshold_deg,
+        mode_continuous_symmetry_samples=(
+            args.mode_continuous_symmetry_samples
+        ),
+    )
     _run_stage(
         "refine", refine_command, env=base_env,
         manifest=manifest, manifest_path=manifest_path,
@@ -416,13 +573,16 @@ def main() -> None:
         "convert", convert_command, env=base_env,
         manifest=manifest, manifest_path=manifest_path,
     )
+    execution_pose_input = _execution_pose_path(
+        refinement_dir, args.mode_aware
+    )
 
     execute_command = [
         sys.executable,
         str(PROJECT_ROOT / "scripts/pipeline/run_industrial_cad_pick_place.py"),
         "--object-config", str(object_config),
         "--grasp-candidates", str(grasp_candidates),
-        "--pose-hypotheses", str(pose_hypotheses),
+        "--pose-hypotheses", str(execution_pose_input),
         "--output", str(execution_dir),
         "--seed", str(args.seed),
         "--image-width", "720",
@@ -482,6 +642,12 @@ def main() -> None:
         "gating": str(gate_dir),
         "refinement": str(refinement_dir),
         "pose_hypotheses": str(pose_hypotheses),
+        "pose_modes": (
+            str(refinement_dir / "pose-modes-refined.json")
+            if args.mode_aware
+            else None
+        ),
+        "execution_pose_input": str(execution_pose_input),
         "execution": str(execution_dir),
         "execution_result": str(execution_result_path),
     }

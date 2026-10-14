@@ -11,6 +11,13 @@ import subprocess
 import sys
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+from official_eval_guard import (  # noqa: E402
+    require_official_eval_dependencies,
+)
+
+
 def main() -> None:
     project_root = Path(__file__).resolve().parents[2]
     workspace = project_root.parents[1]
@@ -43,6 +50,8 @@ def main() -> None:
         raise SystemExit(
             "official evaluator is missing; run scripts/bootstrap/fetch_bop_toolkit_eval_raw.py"
         )
+
+    require_official_eval_dependencies(project_root=project_root)
 
     eval_root = args.eval_root.resolve()
     eval_root.mkdir(parents=True, exist_ok=True)

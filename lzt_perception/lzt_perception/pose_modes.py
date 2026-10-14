@@ -76,6 +76,9 @@ class PoseMode:
     member_hypothesis_ids: tuple[int, ...]
     member_weights: tuple[float, ...]
     symmetry_classes: tuple[str, ...]
+    dispersion_covariance_se3: np.ndarray | None = None
+    predictive_covariance_se3: np.ndarray | None = None
+    uncertainty_method: str = "candidate_dispersion_only"
 
     def __post_init__(self) -> None:
         if self.mode_id < 0 or self.representative_hypothesis_id < 0:
@@ -101,6 +104,18 @@ class PoseMode:
             _transform(self.transform_camera_object, "transform_camera_object"),
         )
         object.__setattr__(self, "covariance_se3", _covariance(self.covariance_se3))
+        if self.dispersion_covariance_se3 is not None:
+            object.__setattr__(
+                self,
+                "dispersion_covariance_se3",
+                _covariance(self.dispersion_covariance_se3),
+            )
+        if self.predictive_covariance_se3 is not None:
+            object.__setattr__(
+                self,
+                "predictive_covariance_se3",
+                _covariance(self.predictive_covariance_se3),
+            )
 
 
 @dataclass(frozen=True)
@@ -115,6 +130,7 @@ class PoseMixture:
     clustering_config: PoseModeClusteringConfig
     source_hypothesis_count: int
     uncertainty_method: str = "symmetry_quotient_weighted_se3_mixture"
+    reliability: float | None = None
 
     def __post_init__(self) -> None:
         if not self.object_id or not self.modes:
@@ -128,6 +144,8 @@ class PoseMixture:
             raise ValueError("modes must be ordered by decreasing weight")
         if not np.isclose(sum(weights), 1.0, atol=1e-8):
             raise ValueError("mode weights must sum to one")
+        if self.reliability is not None and not 0.0 <= self.reliability <= 1.0:
+            raise ValueError("mixture reliability must lie in [0, 1]")
 
 
 def symmetry_aware_pose_distance(
@@ -233,6 +251,10 @@ def cluster_pose_hypotheses(
     hypothesis_set: PoseHypothesisSet,
     cad_object: CADObject,
     config: PoseModeClusteringConfig | None = None,
+    *,
+    predictive_covariance_se3: np.ndarray | None = None,
+    predictive_uncertainty_method: str | None = None,
+    confidence_is_calibrated_probability: bool = False,
 ) -> PoseMixture:
     """Cluster Top-K poses into deterministic non-equivalent pose modes."""
 
@@ -241,9 +263,15 @@ def cluster_pose_hypotheses(
         hypothesis_set.hypotheses,
         key=lambda item: (-item.confidence, item.hypothesis_id),
     )
-    confidences = np.asarray(
+    raw_confidences = np.asarray(
         [max(item.confidence, 0.0) for item in hypotheses], dtype=np.float64
     )
+    reliability = (
+        float(np.max(raw_confidences))
+        if confidence_is_calibrated_probability
+        else None
+    )
+    confidences = raw_confidences.copy()
     if np.sum(confidences) <= 1e-12:
         confidences = np.ones_like(confidences)
     confidences /= np.sum(confidences)
@@ -283,7 +311,7 @@ def cluster_pose_hypotheses(
     unsorted_modes = []
     for cluster in clusters:
         representative = max(cluster, key=lambda item: item.confidence)
-        mean, covariance, metadata = _mode_statistics(
+        mean, dispersion_covariance, metadata = _mode_statistics(
             cluster,
             global_weights,
             cad_object,
@@ -298,7 +326,7 @@ def cluster_pose_hypotheses(
                 representative,
                 tuple(sorted(cluster, key=lambda item: item.hypothesis_id)),
                 mean,
-                covariance,
+                dispersion_covariance,
                 metadata,
             )
         )
@@ -310,15 +338,33 @@ def cluster_pose_hypotheses(
         representative,
         members,
         mean,
-        covariance,
+        dispersion_covariance,
         metadata,
     ) in enumerate(unsorted_modes):
+        predictive_covariance = (
+            None
+            if predictive_covariance_se3 is None
+            else _covariance(predictive_covariance_se3)
+        )
+        total_covariance = (
+            dispersion_covariance
+            if predictive_covariance is None
+            else _covariance(predictive_covariance + dispersion_covariance)
+        )
+        uncertainty_method = (
+            "candidate_dispersion_only"
+            if predictive_covariance is None
+            else (
+                predictive_uncertainty_method
+                or "predictive_pose_error_plus_candidate_dispersion"
+            )
+        )
         modes.append(
             PoseMode(
                 mode_id=mode_id,
                 weight=mode_weight / total_mode_weight,
                 transform_camera_object=mean,
-                covariance_se3=covariance,
+                covariance_se3=total_covariance,
                 representative_hypothesis_id=representative.hypothesis_id,
                 member_hypothesis_ids=tuple(
                     item.hypothesis_id for item in members
@@ -329,6 +375,9 @@ def cluster_pose_hypotheses(
                 symmetry_classes=tuple(
                     metadata[item.hypothesis_id][1] for item in members
                 ),
+                dispersion_covariance_se3=dispersion_covariance,
+                predictive_covariance_se3=predictive_covariance,
+                uncertainty_method=uncertainty_method,
             )
         )
     return PoseMixture(
@@ -339,6 +388,12 @@ def cluster_pose_hypotheses(
         modes=tuple(modes),
         clustering_config=settings,
         source_hypothesis_count=len(hypotheses),
+        uncertainty_method=(
+            "symmetry_quotient_predictive_plus_dispersion_mixture"
+            if predictive_covariance_se3 is not None
+            else "symmetry_quotient_candidate_dispersion_mixture"
+        ),
+        reliability=reliability,
     )
 
 
@@ -354,6 +409,7 @@ def pose_mixtures_to_jsonable(
             "image_id": mixture.image_id,
             "instance_id": mixture.instance_id,
             "uncertainty_method": mixture.uncertainty_method,
+            "reliability": mixture.reliability,
             "source_hypothesis_count": mixture.source_hypothesis_count,
             "mode_count": len(mixture.modes),
             "clustering_config": mixture.clustering_config.to_dict(),
@@ -371,6 +427,17 @@ def pose_mixtures_to_jsonable(
                         mode.transform_camera_object.tolist()
                     ),
                     "covariance_se3": mode.covariance_se3.tolist(),
+                    "dispersion_covariance_se3": (
+                        None
+                        if mode.dispersion_covariance_se3 is None
+                        else mode.dispersion_covariance_se3.tolist()
+                    ),
+                    "predictive_covariance_se3": (
+                        None
+                        if mode.predictive_covariance_se3 is None
+                        else mode.predictive_covariance_se3.tolist()
+                    ),
+                    "uncertainty_method": mode.uncertainty_method,
                 }
                 for mode in mixture.modes
             ],

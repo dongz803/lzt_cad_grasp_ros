@@ -45,12 +45,12 @@ RGB-D → perception → grasp_planning → kinematics
   夹爪开度、均匀密度质心偏差、接触边缘距离和 Robotiq 2F-85 手指—CAD 碰撞；
 - FoundPose 已安装到隔离环境，并已在 RTX 3060 上完成 T-LESS 粗 6D 位姿推理；
 - 已扩展真实 Top-5 PnP 粗位姿，并输出对称归一化的加权 SE(3) 协方差；对象
-  2–4 已完成完整测试，共形成 777 组、3885 个真实候选；
+  1–30 已完成 Top-5 推理，共形成 4024 组、20120 个真实候选；
 - 已将 Top-K SE(3) 协方差按抓取点力臂传播到取料和放料容差，联合 Top-K
   置信度、IK/碰撞回调、解析抓取质量和运动距离输出鲁棒排序；
 - T-LESS BOP19 的 30 个 CAD、20 个场景、1000 张目标图像和 6423 个目标实例已校验完整；
-- 标准对象 1–10 均已完成 798 模板、对象表示、完整目标推理、可视化和官方
-  VSD/MSSD/MSPD 流程，共输出 1896 个 6D 位姿；
+- 标准对象 1–30 均已完成 798 模板、对象表示、完整目标推理和官方
+  VSD/MSSD/MSPD 流程，共输出 4024 个 6D 位姿，官方综合 AR 为 0.32545；
 - 已建立 GT/CNOS 统一掩膜评价入口，按同一 BOP19 目标、Top-`inst_count`
   预测预算和一对一匹配输出 IoU、边界 F1、检测召回与逐实例记录，并可在同一
   报告中汇总 FoundPose MSSD/MSPD；
@@ -65,10 +65,12 @@ RGB-D → perception → grasp_planning → kinematics
   BOP 目标实例并采用官方一对一匹配后，目标覆盖率由 54.76% 降到 47.36%，
   对象 2–4 宏平均 BOP AR 由 0.2914 提升到 0.3592，其中 MSSD/VSD 提升，
   MSPD 从 0.4855 降到 0.4531；
-- 已增加对称感知位姿模式、模式内 6×6 协方差和模式中心 RGB-D 精修；
-  在对象 2–4、固定 1419 个目标和 54.76% 覆盖率下，官方 BOP19 宏平均
-  MSSD/MSPD/VSD/综合 AR 由 0.2095/0.4855/0.1793/0.2914 提高到
-  0.4246/0.4936/0.3753/0.4312；这仍是三对象子集结果，不是完整 T-LESS 结论；
+- 已增加对称感知位姿模式、模式内 6×6 协方差和模式中心 RGB-D 精修；对象 2–4
+  开发集的 10 mm/5° 设置达到 0.4332/0.4981/0.3844/0.4386 的官方
+  MSSD/MSPD/VSD/综合 AR，与逐候选精修 0.4383 的综合 AR 持平；
+- 对象 5–10 已使用冻结的 14 维可靠性模型和 10 mm/5° 参数完成独立 CAD 留出评价：
+  FoundPose 原始、门控可靠性、逐候选精修和模式精修的综合 AR 分别为
+  0.4404、0.4977、0.5423 和 0.5418；该结果不包含对象 5–10 的预测协方差标定；
 - 已接通 `T_base_object = T_base_camera × T_camera_object`、MuJoCo 仿真精确
   外参、UR5e Jacobian 阻尼最小二乘 IK 和逐段路径接触检查，排序结果会输出基座系
   抓取矩阵、六关节解和碰撞对；实机仍需单独完成手眼标定；
@@ -80,8 +82,9 @@ RGB-D → perception → grasp_planning → kinematics
 - T-LESS 用于第一阶段标准复现；ROBI→BOP 转换、RealSense 深度到 RGB
   重投影、GT 掩膜生成和 FoundPose 数据集注册已实现，Chrome Screw 的5张真实
   RealSense图像、190个反光实例已完成端到端6D位姿验证；
-- 标准模板已完成对象 1–19；对象 20–30 的模板生成按当前实验安排暂停，已有中间
-  文件保留，最终 30 类基线尚未冻结。
+- 已用对象 2–4 冻结的 14 维可靠性模型和 10 mm/5° 聚类阈值完成 T-LESS
+  对象 1–30 全链路评价；原始 Top-5、门控可靠性、逐候选精修和模式精修的官方
+  综合 AR 分别为 0.32234、0.38700、0.43706 和 0.43671；对象 1 和 5–30 未用于重新调参。
 
 ## 目录
 
@@ -501,19 +504,21 @@ MUJOCO_GL=egl python3 src/lzt_cad_grasp_ros/scripts/pipeline/run_industrial_cad_
 ## 创新点一：面向对称工业物料的校准多假设 6D 位姿感知与模式级精修
 
 当前创新点一已形成感知原型：先用物理硬门控删除负深度、极端工作空间及明显
-RGB-D 不一致候选，再从 PnP、CAD 轮廓、深度残差和组内一致性提取 16 维无量纲
+RGB-D 不一致候选，再从 PnP、CAD 轮廓、深度残差和组内一致性提取 14 维无量纲
 特征，用 L2 逻辑回归输出候选正确概率；随后按 CAD 对称先验将 Top-K 聚类为多个非等价
 位姿模式，对模式中心执行 RGB-D/CAD 精修、修正传播、重审核和重校准。其目标输出是
 “多个非等价物体位姿模式 + 模式概率 + 模式内 SE(3) 不确定度”，而不是抓取位姿。
 
 下游已实现创新点二的基础原型：将校准概率、Top-K 位姿、CAD 抓取质量、IK/碰撞和
-SE(3) 不确定度用于期望成功和 CVaR 尾部风险排序，并支持主动拒绝。模式级协方差的直接传播和
-显式任务等价性消歧尚未完成。CAD 抓取候选生成、IK 和碰撞检查作为基础能力，不单独宣称创新。
+SE(3) 不确定度用于期望成功和 CVaR 尾部风险排序，并支持主动拒绝。V3 一键流水线
+已支持 `--mode-aware` 和冻结预测协方差模型，最终 `pose-modes-refined.json` 可直接作为
+执行输入，使每个模式的总协方差进入抓取风险计算；显式任务等价性消歧仍未完成。
+CAD 抓取候选生成、IK 和碰撞检查作为基础能力，不单独宣称创新。
 
 冻结模型位于：
 
 ```text
-lzt_perception/config/reliability/tless_objects2_4_logistic_v2.json
+lzt_perception/config/reliability/tless_objects2_4_logistic_v3.json
 ```
 
 该模型仅使用 T-LESS 对象 2–4 的 MSSD 作为离线训练标签；运行时不读取真值。
@@ -539,9 +544,14 @@ python3 scripts/perception/train_pose_reliability.py \
 ```bash
 MUJOCO_GL=egl python3 scripts/pipeline/run_tless_obj4_pipeline.py \
   --run-id innovation1_demo --seed 0 --grasp-focus \
-  --reliability-model lzt_perception/config/reliability/tless_objects2_4_logistic_v2.json \
+  --reliability-model lzt_perception/config/reliability/tless_objects2_4_logistic_v3.json \
+  --mode-aware \
+  --predictive-covariance-model lzt_perception/config/uncertainty/tless_objects2_4_predictive_v3.json \
   --grasp-ranking cvar --cvar-tail-probability 0.25 --cvar-risk-weight 0.5
 ```
+
+不传 `--mode-aware` 时仍保留原逐候选精修兼容路径。模式路径会同时保存普通候选
+`pose-hypotheses-refined.json`用于审计，并将最终模式文件作为实际执行输入。
 
 运行现有风险决策原型的严格配对消融（脚本名保留历史 `innovation1` 标识；基线和方法分支
 使用相同随机条件，并复用同一份图像和 FoundPose 原始 Top-K）：
@@ -576,14 +586,14 @@ ros2 run lzt_cad_grasp_ros cad_grasp_exploration_node
 ## 后续实现顺序
 
 1. 用独立 MuJoCo/真实工作站校准集修正 T-LESS 概率的跨域偏差，冻结主动拒绝阈值；
-2. 将已验证的 mode-aware 位姿路径接入通用端到端流水线，并将模式级协方差
-   直接输入 CVaR 抓取排序；
+2. 完成 mode-aware 一键路径的多种子配对实验，核对模式级协方差、空假设和CVaR
+   在所有运行清单中的可追溯性；
 3. 用对象 8–10 冻结集验证 RGB-D mask 修正，另行运行改进 mask 下的 FoundPose；
-4. 将通过审计的 Top-K 门控扩展到对象 5–10，并形成 Best-1/原始 Top-K/门控
-   Top-K 对照；
+4. 整理已完成的 T-LESS 1–30 Best-1/原始 Top-K/门控/逐候选精修/模式精修主表、
+   逐对象结果和失败瀑布；
 5. 将严格配对实验扩展到多 CAD 和每种方法至少 50 次，形成置信区间与失败分布；
 6. 实机手眼标定后替换仿真外参，验证真实工作空间、IK 和碰撞检查；
-7. 完成 T-LESS 1–30 同配置全量评价，扩展 ROBI 与多工业 CAD 实验。
+7. 在已完成 T-LESS 1–30 同配置全量评价的基础上，扩展 ROBI 与多工业 CAD 跨域实验。
 
 具体选择与操作边界见 `docs/FOUNDPOSE_BASELINE.md`，新增位姿修正与机器人约束链
 见 `docs/POSE_REFINEMENT_AND_ROBOT_CONSTRAINTS.md`。

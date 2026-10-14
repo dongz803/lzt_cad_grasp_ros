@@ -8,6 +8,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Any
@@ -34,9 +35,28 @@ from lzt_benchmark.topk_evaluation import (  # noqa: E402
     write_bop_csv,
 )
 
+from official_eval_guard import (  # noqa: E402
+    require_official_eval_dependencies,
+)
+
 
 def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _bop_method_token(name: str) -> str:
+    """Return a BOP-safe method token without the filename field separator.
+
+    The BOP toolkit parses the first underscore as the boundary between the
+    method name and ``dataset-split``.  Keeping an underscore in a user-facing
+    method name such as ``mode_aware`` therefore produces a valid CSV with an
+    invalid BOP result filename.
+    """
+
+    token = re.sub(r"[^A-Za-z0-9.-]+", "-", name).strip("-.")
+    if not token:
+        raise ValueError(f"method name has no BOP-safe characters: {name!r}")
+    return token
 
 
 def _named_paths(values: list[str], argument: str) -> dict[str, list[Path]]:
@@ -298,6 +318,9 @@ def main() -> None:
     parser.add_argument("--official-workers", type=int, default=1)
     args = parser.parse_args()
 
+    if args.run_official:
+        require_official_eval_dependencies(project_root=PROJECT_ROOT)
+
     method_paths = _named_paths(args.method, "--method")
     score_keys = _named_values(args.score_key, "--score-key")
     object_ids = set(args.object_id)
@@ -385,8 +408,10 @@ def main() -> None:
         )
         report["methods"][name] = method_summary
         method_records[name] = (selected, score_key)
-        bop_csv = args.output_dir / "bop_results" / f"{name}_tless-test.csv"
+        bop_token = _bop_method_token(name)
+        bop_csv = args.output_dir / "bop_results" / f"{bop_token}_tless-test.csv"
         write_bop_csv(selected, bop_csv)
+        method_summary["bop_method_token"] = bop_token
         method_summary["bop_result_csv"] = str(bop_csv.resolve())
 
     raw_method = args.raw_method or (

@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 
 import numpy as np
+import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +95,74 @@ def test_negative_and_out_of_workspace_pose_is_rejected() -> None:
     assert "outside_camera_workspace" in decision.rejection_reasons
     assert "model_behind_camera" in decision.rejection_reasons
     assert decision.robust_score == 0.0
+
+
+def test_partly_behind_camera_is_soft_but_mostly_behind_is_hard() -> None:
+    source = record(z_m=0.1)
+    intrinsics = np.array(
+        [[200.0, 0.0, 60.0], [0.0, 200.0, 50.0], [0.0, 0.0, 1.0]]
+    )
+    transform = np.eye(4)
+    transform[2, 3] = 0.1
+
+    partly_behind = np.column_stack(
+        (
+            np.linspace(-0.02, 0.02, 10),
+            np.zeros(10),
+            np.r_[np.zeros(6), np.full(4, -0.2)],
+        )
+    )
+    mask, rendered_depth, _ = render_model_points(
+        partly_behind, transform, intrinsics, (100, 120), splat_radius_px=2
+    )
+    depth = np.zeros(mask.shape, dtype=np.float64)
+    finite = np.isfinite(rendered_depth)
+    depth[finite] = rendered_depth[finite]
+    settings = PoseGateConfig(
+        hard_minimum_positive_model_fraction=0.5,
+        minimum_positive_model_fraction=0.95,
+    )
+
+    soft = evaluate_pose_candidate(
+        source, partly_behind, intrinsics, mask, depth, settings
+    )
+    fully_visible = partly_behind.copy()
+    fully_visible[:, 2] = 0.0
+    visible_mask, visible_rendered_depth, _ = render_model_points(
+        fully_visible, transform, intrinsics, (100, 120), splat_radius_px=2
+    )
+    visible_depth = np.zeros(visible_mask.shape, dtype=np.float64)
+    visible_finite = np.isfinite(visible_rendered_depth)
+    visible_depth[visible_finite] = visible_rendered_depth[visible_finite]
+    visible = evaluate_pose_candidate(
+        source,
+        fully_visible,
+        intrinsics,
+        visible_mask,
+        visible_depth,
+        settings,
+    )
+    mostly_behind = partly_behind.copy()
+    mostly_behind[:2, 2] = -0.2
+    hard = evaluate_pose_candidate(
+        source, mostly_behind, intrinsics, mask, depth, settings
+    )
+
+    assert soft.accepted
+    assert "low_positive_model_fraction" in soft.soft_quality_flags
+    assert "model_behind_camera" not in soft.rejection_reasons
+    assert 0.0 < soft.metrics["positive_model_quality"] < 1.0
+    assert soft.geometric_quality < visible.geometric_quality
+    assert not hard.accepted
+    assert "model_behind_camera" in hard.rejection_reasons
+
+
+def test_positive_model_fraction_thresholds_must_be_ordered() -> None:
+    with pytest.raises(ValueError, match="hard minimum"):
+        PoseGateConfig(
+            hard_minimum_positive_model_fraction=0.9,
+            minimum_positive_model_fraction=0.8,
+        )
 
 
 def test_malformed_pose_is_a_hard_rejection_not_an_exception() -> None:

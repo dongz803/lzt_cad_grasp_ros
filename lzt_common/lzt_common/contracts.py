@@ -134,6 +134,7 @@ class PoseHypothesisSet:
     covariance_se3: np.ndarray | None = None
     uncertainty_method: str = "unavailable"
     symmetry_discretization_deg: float | None = None
+    reliability: float | None = None
 
     def __post_init__(self) -> None:
         if not self.object_id:
@@ -147,6 +148,8 @@ class PoseHypothesisSet:
             and self.symmetry_discretization_deg <= 0.0
         ):
             raise ValueError("symmetry_discretization_deg must be positive")
+        if self.reliability is not None and not 0.0 <= self.reliability <= 1.0:
+            raise ValueError("reliability must lie in [0, 1]")
         confidences = [item.confidence for item in self.hypotheses]
         if any(a < b for a, b in zip(confidences, confidences[1:])):
             raise ValueError("hypotheses must be ordered by decreasing confidence")

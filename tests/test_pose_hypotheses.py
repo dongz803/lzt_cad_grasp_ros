@@ -7,10 +7,15 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from lzt_common.contracts import CADObject, ContinuousSymmetry  # noqa: E402
+from lzt_common.contracts import (  # noqa: E402
+    CADObject,
+    ContinuousSymmetry,
+    PoseHypothesis,
+)
 from lzt_perception.pose_hypotheses import (  # noqa: E402
     foundpose_records_to_top_k,
     hypothesis_sets_to_jsonable,
+    symmetry_aware_covariance,
 )
 
 
@@ -105,6 +110,31 @@ def test_two_pose_hypotheses_capture_translation_uncertainty() -> None:
 
     assert result.covariance_se3 is not None
     assert np.isclose(result.covariance_se3[0, 0], 0.000025)
+
+
+def test_covariance_remains_psd_with_extreme_pose_outlier() -> None:
+    cad = CADObject(object_id="part", mesh_path=Path("part.ply"))
+    residuals = (
+        (0.0, 0.0, 0.5),
+        (0.01, -0.02, 0.52),
+        (500000.0, 0.03, 0.48),
+    )
+    hypotheses = []
+    for hypothesis_id, translation in enumerate(residuals):
+        transform = np.eye(4)
+        transform[:3, 3] = translation
+        hypotheses.append(
+            PoseHypothesis(
+                transform_camera_object=transform,
+                confidence=1.0 / len(residuals),
+                hypothesis_id=hypothesis_id,
+            )
+        )
+
+    covariance = symmetry_aware_covariance(tuple(hypotheses), cad)
+
+    assert covariance is not None
+    assert float(np.min(np.linalg.eigvalsh(covariance))) >= -1e-10
 
 
 def test_json_weights_are_normalized_from_raw_confidence() -> None:

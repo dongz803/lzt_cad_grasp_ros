@@ -5,6 +5,7 @@ __pycache__/
 .firecrawl/
 outputs/
 datasets/
+!/scripts/datasets/
 checkpoints/
 /third_party/foundpose/
 /third_party/bop_toolkit_full/

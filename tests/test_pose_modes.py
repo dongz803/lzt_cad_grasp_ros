@@ -103,3 +103,25 @@ def test_invalid_mode_thresholds_are_rejected() -> None:
     with pytest.raises(ValueError):
         PoseModeClusteringConfig(maximum_rotation_distance_deg=181.0)
 
+
+def test_singleton_mode_keeps_predictive_covariance_separate_from_dispersion() -> None:
+    pose = np.eye(4)
+    pose[2, 3] = 0.6
+    predictive = np.diag([1e-6, 2e-6, 3e-6, 1e-4, 2e-4, 0.0])
+    mixture = cluster_pose_hypotheses(
+        _set(PoseHypothesis(pose, 0.7, hypothesis_id=0)),
+        _cad(),
+        predictive_covariance_se3=predictive,
+        predictive_uncertainty_method="test_calibration",
+        confidence_is_calibrated_probability=True,
+    )
+    mode = mixture.modes[0]
+
+    np.testing.assert_allclose(mode.dispersion_covariance_se3, np.zeros((6, 6)))
+    np.testing.assert_allclose(mode.predictive_covariance_se3, predictive)
+    np.testing.assert_allclose(mode.covariance_se3, predictive)
+    assert mode.uncertainty_method == "test_calibration"
+    assert mixture.reliability == pytest.approx(0.7)
+    payload = pose_mixtures_to_jsonable([mixture])[0]
+    assert payload["reliability"] == pytest.approx(0.7)
+    assert payload["modes"][0]["predictive_covariance_se3"] is not None

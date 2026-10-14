@@ -1,5 +1,6 @@
 from pathlib import Path
 import csv
+import importlib.util
 import sys
 
 import numpy as np
@@ -20,6 +21,22 @@ from lzt_benchmark.topk_evaluation import (  # noqa: E402
     summarize_selected_predictions,
     write_bop_csv,
 )
+
+
+def _load_evaluation_script():
+    path = PROJECT_ROOT / "scripts/evaluation/evaluate_topk_coverage.py"
+    spec = importlib.util.spec_from_file_location("evaluate_topk_coverage", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_bop_method_token_removes_filename_separator() -> None:
+    script = _load_evaluation_script()
+
+    assert script._bop_method_token("per_candidate") == "per-candidate"
+    assert script._bop_method_token("mode aware") == "mode-aware"
 
 
 def pose(

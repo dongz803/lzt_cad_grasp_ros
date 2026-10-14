@@ -142,7 +142,22 @@ def symmetry_aware_covariance(
     mean = np.sum(weights[:, None] * residual_array, axis=0)
     centered = residual_array - mean
     covariance = (centered * weights[:, None]).T @ centered
-    return 0.5 * (covariance + covariance.T)
+    covariance = 0.5 * (covariance + covariance.T)
+
+    # The weighted Gram product above is positive semidefinite by construction.
+    # With an extreme PnP translation outlier, however, its condition number can
+    # be large enough for eigvalsh to report a tiny negative eigenvalue from
+    # floating-point round-off.  Shift only that numerical negative part back to
+    # zero so the raw Top-K result can be serialized and subsequently hard-gated.
+    eigenvalues = np.linalg.eigvalsh(covariance)
+    minimum_eigenvalue = float(np.min(eigenvalues))
+    if minimum_eigenvalue < 0.0:
+        spectral_scale = max(1.0, float(np.max(np.abs(eigenvalues))))
+        numerical_margin = np.finfo(np.float64).eps * spectral_scale
+        covariance += np.eye(6) * (
+            -minimum_eigenvalue + numerical_margin
+        )
+    return covariance
 
 
 def _record_transform(record: dict[str, Any], units_to_m: float) -> np.ndarray:
@@ -313,6 +328,7 @@ def hypothesis_sets_to_jsonable(
                 "image_id": item.image_id,
                 "instance_id": item.instance_id,
                 "uncertainty_method": item.uncertainty_method,
+                "reliability": item.reliability,
                 "symmetry_discretization_deg": item.symmetry_discretization_deg,
                 "covariance_se3": (
                     None if item.covariance_se3 is None else item.covariance_se3.tolist()
@@ -326,6 +342,11 @@ def hypothesis_sets_to_jsonable(
                         "source": hypothesis.source,
                         "transform_camera_object": (
                             hypothesis.transform_camera_object.tolist()
+                        ),
+                        "covariance_se3": (
+                            None
+                            if hypothesis.covariance_se3 is None
+                            else hypothesis.covariance_se3.tolist()
                         ),
                     }
                     for hypothesis, weight in zip(item.hypotheses, weights)

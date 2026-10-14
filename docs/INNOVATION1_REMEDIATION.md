@@ -2,7 +2,7 @@
 
 > 对象：T-LESS 2/3/4 实测（[pose-modes-initial.json](../outputs/innovation1_pose_modes/tless_objects2_4_v1/obj4/refinement/pose-modes-initial.json)、[logistic_v2.json](../lzt_perception/config/reliability/tless_objects2_4_logistic_v2.json)）
 > 范围：感知层（`lzt_perception`），不含决策与控制
-> 状态：三个问题均已用数据确认，修法待实施
+> 状态（2026-09-29）：本文件保留为问题发现与早期修法设计，不再代表当前代码状态；其中“用聚类阈值充当协方差先验”的方案已被否决。实际实现、影响和证据缺口以 [INNOVATION1_V3_PROGRESS.md](INNOVATION1_V3_PROGRESS.md) 的状态表为准。
 
 ## 摘要
 

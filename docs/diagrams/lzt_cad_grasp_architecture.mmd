@@ -1,0 +1,130 @@
+%%{init: {"flowchart": {"htmlLabels": false}, "themeVariables": {"fontFamily": "Noto Sans CJK SC, Microsoft YaHei, sans-serif"}}}%%
+flowchart TD
+    CAD["物料 CAD 模型<br/>YAML 对称性与尺度配置"]
+    OBS["在线输入<br/>RGB-D + 相机内参"]
+    GOAL["目标放置位姿/放置区域"]
+    CALIB["手眼标定<br/>T_base_camera"]
+
+    subgraph OFFLINE["离线对象准备：更换 CAD 时执行"]
+        TEMPLATE["CAD 多视角渲染<br/>RGB + 深度 + 物体坐标图"]
+        DINO_TEMPLATE["预训练 DINOv2<br/>提取模板特征"]
+        REPRESENTATION["对象表示<br/>模板特征 + CAD 三维坐标<br/>模板视角信息"]
+        GRASP_GEN["从 CAD 几何生成<br/>平行夹爪候选"]
+        GRASP_FILTER["离线几何筛选<br/>开口宽度 + 对向性<br/>边缘距离 + 指碰撞"]
+    end
+
+    CAD --> TEMPLATE --> DINO_TEMPLATE --> REPRESENTATION
+    CAD --> GRASP_GEN --> GRASP_FILTER
+
+    subgraph FOUNDPOSE["FoundPose 学习式粗位姿前端"]
+        SEG["外部分割/检测<br/>ROI + Mask"]
+        MASK_REFINE["RGB-D Mask 清理<br/>深度一致性 + 形态学处理"]
+        DINO_QUERY["DINOv2 查询图像特征"]
+        MATCH["查询特征与模板特征匹配"]
+        CORR["建立图像 2D 像素<br/>与 CAD 3D 点对应"]
+        PNP["PnP-RANSAC"]
+        RAW_TOPK["FoundPose 原始 Top-K<br/>粗 6D 位姿候选"]
+    end
+
+    OBS --> SEG --> MASK_REFINE --> DINO_QUERY
+    REPRESENTATION --> MATCH
+    DINO_QUERY --> MATCH --> CORR --> PNP --> RAW_TOPK
+
+    subgraph PERCEPTION["创新感知层：多假设位姿可靠性建模"]
+        HARD_GATE["最小物理硬门控<br/>负深度/极端工作空间<br/>大部分模型位于相机后方"]
+        AUDIT_PRE["精修前几何审计<br/>PnP + CAD投影 + Mask + 深度"]
+        REL_PRE["精修前 14 维特征<br/>可靠性概率与 Top-K 重排"]
+        MODE_PRE["第一次对称分模式<br/>归并等价候选、保留非等价多解"]
+        MODE_REFINE["RGB-D/CAD 模式中心精修<br/>轮廓 + 深度局部优化"]
+        PROPAGATE["将模式中心修正增量<br/>传播到模式成员"]
+        AUDIT_POST["精修后重新几何审计<br/>重新提取 14 维特征"]
+        REL_POST["重新计算可靠性概率<br/>精修后 Top-K 重排"]
+        MODE_POST["第二次对称分模式<br/>形成最终 PoseMixture"]
+        UNCERTAINTY["模式不确定度<br/>Σ_total = Σ_predictive + Σ_dispersion"]
+        NULL["显式空假设<br/>Top-K 全错概率"]
+        BELIEF["多模态位姿信念<br/>模式中心 + 权重 + 协方差 + 空假设"]
+    end
+
+    RAW_TOPK --> HARD_GATE --> AUDIT_PRE --> REL_PRE --> MODE_PRE
+    CAD --> AUDIT_PRE
+    MASK_REFINE --> AUDIT_PRE
+    MODE_PRE --> MODE_REFINE --> PROPAGATE --> AUDIT_POST --> REL_POST --> MODE_POST
+    CAD --> MODE_REFINE
+    MASK_REFINE --> MODE_REFINE
+    CAD --> AUDIT_POST
+    MASK_REFINE --> AUDIT_POST
+    MODE_POST --> UNCERTAINTY --> BELIEF
+    REL_POST --> NULL --> BELIEF
+
+    subgraph DECISION["风险感知取放联合决策"]
+        FRAME["相机坐标系 → UR5e 基座系"]
+        COMPOSE["每个模式 × 每个 CAD 抓取<br/>组合世界系抓取位姿"]
+        IK["逐模式 UR5e IK<br/>可达性与关节裕量"]
+        COLLISION["逐模式碰撞检查<br/>取料 + 放料"]
+        PROP_RISK["位姿协方差传播到抓取点<br/>平移/旋转/长力臂风险"]
+        EXPECTED["期望任务成功率"]
+        CVAR["CVaR 尾部失败风险<br/>包含 Top-K 全错场景"]
+        RANK["联合评分与排序<br/>抓取质量 + 行程 + 风险"]
+        REJECT{"是否满足执行阈值？"}
+        SELECT["选择最终抓取和放置方案"]
+        ACTIVE_REJECT["主动拒绝<br/>重新观测/重新定位"]
+    end
+
+    BELIEF --> FRAME
+    CALIB --> FRAME --> COMPOSE
+    GRASP_FILTER --> COMPOSE
+    GOAL --> COMPOSE
+    COMPOSE --> IK --> COLLISION --> EXPECTED
+    BELIEF --> PROP_RISK --> EXPECTED
+    NULL --> EXPECTED
+    EXPECTED --> CVAR --> RANK --> REJECT
+    COLLISION --> CVAR
+    PROP_RISK --> CVAR
+    GRASP_FILTER --> RANK
+    REJECT -- "通过" --> SELECT
+    REJECT -- "风险过高" --> ACTIVE_REJECT
+
+    subgraph EXECUTION["机器人执行层"]
+        TRAJECTORY["生成接近/抓取/抬升<br/>搬运/下降轨迹"]
+        MUJOCO["MuJoCo / ROS 2 执行"]
+        RELEASE["当前：位置轨迹 + 开环松爪"]
+        COMPLIANT["规划中：不确定度驱动的<br/>力/位混合柔顺放置"]
+    end
+
+    SELECT --> TRAJECTORY --> MUJOCO --> RELEASE
+    SELECT -. "后续创新点" .-> COMPLIANT
+
+    subgraph EVALUATION["离线训练、标定与评价：在线不可使用"]
+        GT["T-LESS GT<br/>真实位姿 + 可见 Mask"]
+        GT_MATCH["检测 Mask 与 GT Mask<br/>一对一 IoU 匹配"]
+        LABEL["生成候选正确/错误标签"]
+        TRAIN_REL["训练/校准可靠性模型"]
+        FIT_COV["用真实位姿残差<br/>拟合预测协方差"]
+        BOP["官方 BOP 评价<br/>MSSD + MSPD + VSD + AR"]
+        COVERAGE["风险—覆盖率<br/>协方差覆盖率评价"]
+    end
+
+    GT --> GT_MATCH --> LABEL --> TRAIN_REL
+    SEG -. "离线实验输出" .-> GT_MATCH
+    RAW_TOPK -. "离线候选" .-> LABEL
+    TRAIN_REL -. "冻结模型" .-> REL_PRE
+    TRAIN_REL -. "冻结模型" .-> REL_POST
+    GT_MATCH --> FIT_COV
+    MODE_POST -. "离线模式结果" .-> FIT_COV
+    FIT_COV -. "冻结协方差模型" .-> UNCERTAINTY
+    GT_MATCH --> BOP
+    MODE_POST -.-> BOP
+    BELIEF -.-> COVERAGE
+    GT_MATCH --> COVERAGE
+
+    classDef offline fill:#E8F4FD,stroke:#1976D2,color:#111;
+    classDef online fill:#E8F5E9,stroke:#388E3C,color:#111;
+    classDef decision fill:#FFF3E0,stroke:#F57C00,color:#111;
+    classDef evaluation fill:#F3E5F5,stroke:#7B1FA2,color:#111;
+    classDef pending fill:#FFEBEE,stroke:#D32F2F,stroke-dasharray:5 5,color:#111;
+
+    class TEMPLATE,DINO_TEMPLATE,REPRESENTATION,GRASP_GEN,GRASP_FILTER offline;
+    class SEG,MASK_REFINE,DINO_QUERY,MATCH,CORR,PNP,RAW_TOPK,HARD_GATE,AUDIT_PRE,REL_PRE,MODE_PRE,MODE_REFINE,PROPAGATE,AUDIT_POST,REL_POST,MODE_POST,UNCERTAINTY,NULL,BELIEF online;
+    class FRAME,COMPOSE,IK,COLLISION,PROP_RISK,EXPECTED,CVAR,RANK,REJECT,SELECT,ACTIVE_REJECT,TRAJECTORY,MUJOCO,RELEASE decision;
+    class GT,GT_MATCH,LABEL,TRAIN_REL,FIT_COV,BOP,COVERAGE evaluation;
+    class COMPLIANT pending;

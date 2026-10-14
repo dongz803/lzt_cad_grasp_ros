@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PIPELINE = PROJECT_ROOT / "scripts/pipeline/run_tless_obj4_pipeline.py"
 DEFAULT_MODEL = (
     PROJECT_ROOT
-    / "lzt_perception/config/reliability/tless_objects2_4_logistic_v2.json"
+    / "lzt_perception/config/reliability/tless_objects2_4_logistic_v3.json"
 )
 
 

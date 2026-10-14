@@ -1,0 +1,83 @@
+schema_version: 1
+object_id: tless_000027
+display_name: T-LESS 工业物料 27
+cad:
+  mesh: ${BOP_PATH}/tless/models_cad/obj_000027.ply
+  units_to_m: 0.001
+  object_frame: bop_cad_origin
+symmetry:
+  type: discrete
+  transforms:
+  - - - 7.3887e-15
+      - -1.0
+      - 0.0
+      - 0.0
+    - - 1.0
+      - 7.3887e-15
+      - 0.0
+      - 0.0
+    - - 0.0
+      - 0.0
+      - 1.0
+      - 0.0
+    - - 0.0
+      - 0.0
+      - 0.0
+      - 1.0
+  - - - -1.0
+      - -6.05186e-14
+      - 0.0
+      - 0.0
+    - - 6.05186e-14
+      - -1.0
+      - 0.0
+      - 0.0
+    - - 0.0
+      - 0.0
+      - 1.0
+      - 0.0
+    - - 0.0
+      - 0.0
+      - 0.0
+      - 1.0
+  - - - -2.86054e-14
+      - 1.0
+      - 0.0
+      - 0.0
+    - - -1.0
+      - -2.86054e-14
+      - 0.0
+      - 0.0
+    - - 0.0
+      - 0.0
+      - 1.0
+      - 0.0
+    - - 0.0
+      - 0.0
+      - 0.0
+      - 1.0
+perception:
+  roi_source: instance_mask
+  expected_modalities:
+  - rgb
+gripper:
+  type: parallel_jaw
+  minimum_opening_m: 0.005
+  maximum_opening_m: 0.085
+  finger_clearance_m: 0.002
+  finger_thickness_m: 0.008
+  finger_width_m: 0.022
+  finger_depth_m: 0.0375
+grasp_generation:
+  approach_distance_m: 0.08
+  surface_band_fraction: 0.08
+  minimum_antipodal_score: 0.3
+  minimum_edge_distance_m: 0.001
+  maximum_center_of_mass_offset_m: 0.02
+  lateral_sample_fraction: 0.2
+  maximum_candidates: 12
+task:
+  placement_position_tolerance_m: 0.005
+  placement_angle_tolerance_deg: 5.0
+  functional_surfaces: []
+  forbidden_grasp_surfaces: []
