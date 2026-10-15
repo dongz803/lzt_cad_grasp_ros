@@ -12,7 +12,9 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from lzt_perception.pose_reliability import (  # noqa: E402
     FEATURE_NAMES,
     PoseReliabilityModel,
+    apply_affine_logit_calibration,
     binary_probability_metrics,
+    fit_affine_logit_calibrator,
     fit_pose_reliability_model,
     pose_reliability_features,
 )
@@ -131,3 +133,42 @@ def test_training_rejects_constant_feature_dimensions() -> None:
 
     with pytest.raises(ValueError, match="pnp_score"):
         fit_pose_reliability_model(features, labels)
+
+
+def test_affine_logit_calibration_folds_into_runtime_model() -> None:
+    rng = np.random.default_rng(19)
+    negative = rng.normal(-1.0, 0.5, size=(30, len(FEATURE_NAMES)))
+    positive = rng.normal(1.0, 0.5, size=(30, len(FEATURE_NAMES)))
+    features = np.vstack((negative, positive))
+    labels = np.r_[np.zeros(30), np.ones(30)]
+    model = fit_pose_reliability_model(features, labels)
+    raw = np.asarray(model.predict_proba(features))
+
+    calibrated = apply_affine_logit_calibration(raw, 0.7, -0.2)
+    folded = model.with_logit_calibration(0.7, -0.2)
+
+    np.testing.assert_allclose(folded.predict_proba(features), calibrated)
+    assert "affine_logit_calibration" in folded.method
+
+
+def test_affine_logit_calibrator_improves_miscalibrated_scores() -> None:
+    probabilities = np.repeat([0.1, 0.3, 0.7, 0.9], 20)
+    labels = np.concatenate(
+        (
+            np.r_[np.zeros(16), np.ones(4)],
+            np.r_[np.zeros(12), np.ones(8)],
+            np.r_[np.zeros(8), np.ones(12)],
+            np.r_[np.zeros(4), np.ones(16)],
+        )
+    )
+    raw = binary_probability_metrics(labels, probabilities)
+
+    scale, bias = fit_affine_logit_calibrator(labels, probabilities)
+    calibrated_probabilities = apply_affine_logit_calibration(
+        probabilities, scale, bias
+    )
+    calibrated = binary_probability_metrics(labels, calibrated_probabilities)
+
+    assert scale >= 0.0
+    assert calibrated["brier_score"] < raw["brier_score"]
+    assert calibrated["log_loss"] < raw["log_loss"]

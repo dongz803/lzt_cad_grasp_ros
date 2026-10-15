@@ -45,6 +45,7 @@ class PoseModeClusteringConfig:
     maximum_translation_distance_m: float = 0.03
     maximum_rotation_distance_deg: float = 15.0
     continuous_symmetry_samples: int = 360
+    use_symmetry_equivalence: bool = True
 
     def __post_init__(self) -> None:
         if self.maximum_translation_distance_m <= 0.0:
@@ -61,6 +62,7 @@ class PoseModeClusteringConfig:
             "maximum_translation_distance_m": self.maximum_translation_distance_m,
             "maximum_rotation_distance_deg": self.maximum_rotation_distance_deg,
             "continuous_symmetry_samples": self.continuous_symmetry_samples,
+            "use_symmetry_equivalence": self.use_symmetry_equivalence,
         }
 
 
@@ -79,6 +81,13 @@ class PoseMode:
     dispersion_covariance_se3: np.ndarray | None = None
     predictive_covariance_se3: np.ndarray | None = None
     uncertainty_method: str = "candidate_dispersion_only"
+    covariance_scale: float | None = None
+    calibration_method: str | None = None
+    nominal_coverage_level: float | None = None
+    empirical_mahalanobis_threshold: float | None = None
+    model_approved: bool | None = None
+    model_valid_for_object: bool | None = None
+    fallback_used: bool = False
 
     def __post_init__(self) -> None:
         if self.mode_id < 0 or self.representative_hypothesis_id < 0:
@@ -116,6 +125,17 @@ class PoseMode:
                 "predictive_covariance_se3",
                 _covariance(self.predictive_covariance_se3),
             )
+        if self.covariance_scale is not None and self.covariance_scale <= 0.0:
+            raise ValueError("covariance_scale must be positive")
+        if self.nominal_coverage_level is not None and not (
+            0.0 < self.nominal_coverage_level < 1.0
+        ):
+            raise ValueError("nominal_coverage_level must lie in (0, 1)")
+        if (
+            self.empirical_mahalanobis_threshold is not None
+            and self.empirical_mahalanobis_threshold <= 0.0
+        ):
+            raise ValueError("empirical Mahalanobis threshold must be positive")
 
 
 @dataclass(frozen=True)
@@ -131,6 +151,13 @@ class PoseMixture:
     source_hypothesis_count: int
     uncertainty_method: str = "symmetry_quotient_weighted_se3_mixture"
     reliability: float | None = None
+    covariance_scale: float | None = None
+    calibration_method: str | None = None
+    nominal_coverage_level: float | None = None
+    empirical_mahalanobis_threshold: float | None = None
+    model_approved: bool | None = None
+    model_valid_for_object: bool | None = None
+    fallback_used: bool = False
 
     def __post_init__(self) -> None:
         if not self.object_id or not self.modes:
@@ -187,6 +214,36 @@ def symmetry_aware_pose_distance(
     )
 
 
+def _pose_distance(
+    first: np.ndarray,
+    second: np.ndarray,
+    cad_object: CADObject,
+    continuous_symmetry_samples: int,
+    *,
+    use_symmetry_equivalence: bool,
+) -> tuple[float, float, np.ndarray, str]:
+    if use_symmetry_equivalence:
+        return symmetry_aware_pose_distance(
+            first,
+            second,
+            cad_object,
+            continuous_symmetry_samples,
+        )
+    reference = _transform(first, "first")
+    candidate = _transform(second, "second")
+    translation_distance = float(
+        np.linalg.norm(candidate[:3, 3] - reference[:3, 3])
+    )
+    rotation_distance_deg = float(
+        np.degrees(
+            np.linalg.norm(
+                _rotation_vector(reference[:3, :3].T @ candidate[:3, :3])
+            )
+        )
+    )
+    return translation_distance, rotation_distance_deg, candidate, "identity"
+
+
 def _weighted_rotation(rotations: list[np.ndarray], weights: np.ndarray) -> np.ndarray:
     matrix = sum(
         weight * rotation for weight, rotation in zip(weights, rotations)
@@ -202,16 +259,19 @@ def _mode_statistics(
     global_weights: dict[int, float],
     cad_object: CADObject,
     continuous_symmetry_samples: int,
+    *,
+    use_symmetry_equivalence: bool,
 ) -> tuple[np.ndarray, np.ndarray, dict[int, tuple[float, str]]]:
     representative = max(members, key=lambda item: item.confidence)
     aligned: list[np.ndarray] = []
     classes: list[str] = []
     for member in members:
-        _, _, equivalent, symmetry_class = symmetry_aware_pose_distance(
+        _, _, equivalent, symmetry_class = _pose_distance(
             representative.transform_camera_object,
             member.transform_camera_object,
             cad_object,
             continuous_symmetry_samples,
+            use_symmetry_equivalence=use_symmetry_equivalence,
         )
         aligned.append(equivalent)
         classes.append(symmetry_class)
@@ -254,6 +314,13 @@ def cluster_pose_hypotheses(
     *,
     predictive_covariance_se3: np.ndarray | None = None,
     predictive_uncertainty_method: str | None = None,
+    predictive_covariance_scale: float | None = None,
+    predictive_calibration_method: str | None = None,
+    predictive_nominal_coverage_level: float | None = None,
+    predictive_empirical_mahalanobis_threshold: float | None = None,
+    predictive_model_approved: bool | None = None,
+    predictive_model_valid_for_object: bool | None = None,
+    predictive_fallback_used: bool = False,
     confidence_is_calibrated_probability: bool = False,
 ) -> PoseMixture:
     """Cluster Top-K poses into deterministic non-equivalent pose modes."""
@@ -286,11 +353,12 @@ def cluster_pose_hypotheses(
         best_distance = np.inf
         for index, cluster in enumerate(clusters):
             representative = max(cluster, key=lambda item: item.confidence)
-            translation, rotation, _, _ = symmetry_aware_pose_distance(
+            translation, rotation, _, _ = _pose_distance(
                 representative.transform_camera_object,
                 hypothesis.transform_camera_object,
                 cad_object,
                 settings.continuous_symmetry_samples,
+                use_symmetry_equivalence=settings.use_symmetry_equivalence,
             )
             if (
                 translation <= settings.maximum_translation_distance_m
@@ -316,6 +384,7 @@ def cluster_pose_hypotheses(
             global_weights,
             cad_object,
             settings.continuous_symmetry_samples,
+            use_symmetry_equivalence=settings.use_symmetry_equivalence,
         )
         mode_weight = float(
             sum(global_weights[item.hypothesis_id] for item in cluster)
@@ -378,6 +447,15 @@ def cluster_pose_hypotheses(
                 dispersion_covariance_se3=dispersion_covariance,
                 predictive_covariance_se3=predictive_covariance,
                 uncertainty_method=uncertainty_method,
+                covariance_scale=predictive_covariance_scale,
+                calibration_method=predictive_calibration_method,
+                nominal_coverage_level=predictive_nominal_coverage_level,
+                empirical_mahalanobis_threshold=(
+                    predictive_empirical_mahalanobis_threshold
+                ),
+                model_approved=predictive_model_approved,
+                model_valid_for_object=predictive_model_valid_for_object,
+                fallback_used=predictive_fallback_used,
             )
         )
     return PoseMixture(
@@ -389,11 +467,27 @@ def cluster_pose_hypotheses(
         clustering_config=settings,
         source_hypothesis_count=len(hypotheses),
         uncertainty_method=(
-            "symmetry_quotient_predictive_plus_dispersion_mixture"
-            if predictive_covariance_se3 is not None
-            else "symmetry_quotient_candidate_dispersion_mixture"
+            (
+                "symmetry_quotient"
+                if settings.use_symmetry_equivalence
+                else "ordinary_se3"
+            )
+            + (
+                "_predictive_plus_dispersion_mixture"
+                if predictive_covariance_se3 is not None
+                else "_candidate_dispersion_mixture"
+            )
         ),
         reliability=reliability,
+        covariance_scale=predictive_covariance_scale,
+        calibration_method=predictive_calibration_method,
+        nominal_coverage_level=predictive_nominal_coverage_level,
+        empirical_mahalanobis_threshold=(
+            predictive_empirical_mahalanobis_threshold
+        ),
+        model_approved=predictive_model_approved,
+        model_valid_for_object=predictive_model_valid_for_object,
+        fallback_used=predictive_fallback_used,
     )
 
 
@@ -410,6 +504,15 @@ def pose_mixtures_to_jsonable(
             "instance_id": mixture.instance_id,
             "uncertainty_method": mixture.uncertainty_method,
             "reliability": mixture.reliability,
+            "covariance_scale": mixture.covariance_scale,
+            "calibration_method": mixture.calibration_method,
+            "nominal_coverage_level": mixture.nominal_coverage_level,
+            "empirical_mahalanobis_threshold": (
+                mixture.empirical_mahalanobis_threshold
+            ),
+            "model_approved": mixture.model_approved,
+            "model_valid_for_object": mixture.model_valid_for_object,
+            "fallback_used": mixture.fallback_used,
             "source_hypothesis_count": mixture.source_hypothesis_count,
             "mode_count": len(mixture.modes),
             "clustering_config": mixture.clustering_config.to_dict(),
@@ -438,6 +541,15 @@ def pose_mixtures_to_jsonable(
                         else mode.predictive_covariance_se3.tolist()
                     ),
                     "uncertainty_method": mode.uncertainty_method,
+                    "covariance_scale": mode.covariance_scale,
+                    "calibration_method": mode.calibration_method,
+                    "nominal_coverage_level": mode.nominal_coverage_level,
+                    "empirical_mahalanobis_threshold": (
+                        mode.empirical_mahalanobis_threshold
+                    ),
+                    "model_approved": mode.model_approved,
+                    "model_valid_for_object": mode.model_valid_for_object,
+                    "fallback_used": mode.fallback_used,
                 }
                 for mode in mixture.modes
             ],

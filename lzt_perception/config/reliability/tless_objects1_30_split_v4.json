@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "name": "tless_objects1_30_reliability_v4",
+  "frozen_on": "2026-10-14",
+  "split": {
+    "train": [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 17, 20, 22, 23, 25, 26, 29, 30],
+    "calibration": [7, 9, 14, 21, 24, 28],
+    "test": [11, 13, 15, 18, 19, 27]
+  },
+  "symmetry_counts": {
+    "train": {
+      "continuous_axis": 7,
+      "discrete": 10,
+      "none": 1
+    },
+    "calibration": {
+      "continuous_axis": 2,
+      "discrete": 3,
+      "none": 1
+    },
+    "test": {
+      "continuous_axis": 2,
+      "discrete": 3,
+      "none": 1
+    }
+  },
+  "selection_policy": {
+    "unit": "CAD object",
+    "random_seed": 20261014,
+    "stratification": "configured symmetry type",
+    "ratios_by_object_count": {
+      "train": 0.6,
+      "calibration": 0.2,
+      "test": 0.2
+    },
+    "test_eligibility": "object IDs 11-30 only",
+    "reason_for_test_eligibility": "objects 2-4 were the V3 development set and objects 5-10 were already used as the V3 holdout",
+    "label_statistics_used_to_select_membership": false,
+    "test_labels_used_for_hyperparameter_selection": false
+  },
+  "prior_exposure": {
+    "objects_2_4": "V3 development results were used previously",
+    "objects_5_10": "V3 holdout results were opened previously",
+    "objects_1_30": "aggregate and per-object V3 full-run outputs existed before this split was frozen",
+    "claim_boundary": "the test split is frozen prospectively for V4 model selection, but is not a never-observed blind benchmark"
+  },
+  "limitations": [
+    "All T-LESS 1-30 V3 outputs existed before this protocol was frozen.",
+    "The six test objects provide object-level generalization evidence but are not a pristine external benchmark.",
+    "A second dataset or new real-camera captures are required for a genuinely blind final validation.",
+    "The split is stratified by configured symmetry type, not by unverified visual-family labels."
+  ]
+}

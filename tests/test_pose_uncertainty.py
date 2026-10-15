@@ -6,7 +6,10 @@ import pytest
 from lzt_common.contracts import CADObject, ContinuousSymmetry
 from lzt_perception.pose_uncertainty import (
     PredictivePoseCovarianceModel,
+    calibrate_covariance_scale,
+    conformal_upper_quantile,
     combine_predictive_and_dispersion,
+    empirical_coverage_statistics,
     fit_predictive_covariance,
     squared_mahalanobis,
     symmetry_aware_pose_residual,
@@ -108,8 +111,78 @@ def test_frozen_predictive_model_rejects_uncalibrated_objects() -> None:
     )
     model = PredictivePoseCovarianceModel.load(path)
 
-    covariance = model.covariance_for("tless_000004")
+    with pytest.raises(ValueError, match="legacy schema v1"):
+        model.covariance_for("tless_000004")
+    covariance = model.covariance_for(
+        "tless_000004", allow_unapproved=True
+    )
     assert covariance.shape == (6, 6)
     assert np.trace(covariance) > 0.0
     with pytest.raises(ValueError, match="not calibrated"):
-        model.covariance_for("tless_000005")
+        model.covariance_for("tless_000005", allow_unapproved=True)
+
+
+def test_undercoverage_inflates_covariance_without_dropping_outliers() -> None:
+    rng = np.random.default_rng(17)
+    residuals = rng.normal(size=(300, 6))
+    projector = np.eye(6)
+    deliberately_small = np.eye(6) * 0.1
+
+    scale, coverage = calibrate_covariance_scale(
+        residuals,
+        deliberately_small,
+        projector,
+        nominal_coverage=0.9,
+        minimum_coverage=0.9,
+    )
+
+    assert scale > 1.0
+    assert coverage["sample_count"] == 300
+    assert coverage["covered_count"] >= 270
+    assert coverage["observed_coverage"] >= 0.9
+
+
+def test_conformal_threshold_and_coverage_keep_every_sample() -> None:
+    distances = np.arange(1.0, 11.0)
+    threshold = conformal_upper_quantile(distances, 0.8)
+    report = empirical_coverage_statistics(distances, threshold, 0.8)
+
+    assert threshold == 9.0
+    assert report["sample_count"] == 10
+    assert report["covered_count"] == 9
+    assert report["observed_coverage"] == pytest.approx(0.9)
+
+
+def test_schema_v2_fails_closed_for_unapproved_object(tmp_path: Path) -> None:
+    model = PredictivePoseCovarianceModel(
+        object_ids=("approved", "rejected"),
+        approved_object_ids=("approved",),
+        rejected_object_ids=("rejected",),
+        covariance_se3=np.eye(6),
+        observable_projector_se3=np.eye(6),
+        covariance_scale=2.0,
+        nominal_coverage_levels=(0.9,),
+        empirical_mahalanobis_thresholds={"0.9000": 10.0},
+        calibration_semantics="predictive_plus_candidate_dispersion",
+        model_approved=True,
+        method="test",
+        conditional_on="test",
+        training={},
+        schema_version=2,
+    )
+
+    model_path = model.save(tmp_path / "predictive_covariance_v2.json")
+    model = PredictivePoseCovarianceModel.load(model_path)
+
+    covariance = model.covariance_for(
+        "approved",
+        calibration_semantics="predictive_plus_candidate_dispersion",
+    )
+    np.testing.assert_allclose(covariance, np.eye(6) * 2.0)
+    assert model.empirical_threshold(0.9) == pytest.approx(10.0)
+    with pytest.raises(ValueError, match="not approved for object"):
+        model.covariance_for("rejected")
+    with pytest.raises(ValueError, match="semantics"):
+        model.covariance_for(
+            "approved", calibration_semantics="predictive_only"
+        )

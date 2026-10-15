@@ -292,6 +292,14 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--allow-unapproved-predictive-covariance",
+        action="store_true",
+        help=(
+            "research-only override for legacy or rejected covariance models; "
+            "default online behavior is fail closed"
+        ),
+    )
+    parser.add_argument(
         "--gate-audit",
         type=Path,
         help="gate audit retaining rejected candidates for group-relative features",
@@ -365,7 +373,11 @@ def main() -> None:
             None
             if predictive_model is None
             else predictive_model.covariance_for(
-                object_config.cad_object.object_id
+                object_config.cad_object.object_id,
+                calibration_semantics=(
+                    "predictive_plus_candidate_dispersion"
+                ),
+                allow_unapproved=args.allow_unapproved_predictive_covariance,
             )
         )
     except ValueError as error:
@@ -704,6 +716,40 @@ def main() -> None:
                     predictive_uncertainty_method=(
                         None if predictive_model is None else predictive_model.method
                     ),
+                    predictive_covariance_scale=(
+                        None
+                        if predictive_model is None
+                        else predictive_model.covariance_scale
+                    ),
+                    predictive_calibration_method=(
+                        None
+                        if predictive_model is None
+                        else predictive_model.method
+                    ),
+                    predictive_nominal_coverage_level=(
+                        None
+                        if predictive_model is None
+                        or 0.9 not in predictive_model.nominal_coverage_levels
+                        else 0.9
+                    ),
+                    predictive_empirical_mahalanobis_threshold=(
+                        None
+                        if predictive_model is None
+                        or 0.9 not in predictive_model.nominal_coverage_levels
+                        else predictive_model.empirical_threshold(0.9)
+                    ),
+                    predictive_model_approved=(
+                        None
+                        if predictive_model is None
+                        else predictive_model.model_approved
+                    ),
+                    predictive_model_valid_for_object=(
+                        None
+                        if predictive_model is None
+                        else object_config.cad_object.object_id
+                        in predictive_model.approved_object_ids
+                    ),
+                    predictive_fallback_used=False,
                     confidence_is_calibrated_probability=(
                         reliability_model is not None
                     ),
@@ -787,6 +833,25 @@ def main() -> None:
                 ).hexdigest(),
                 "conditional_on": predictive_model.conditional_on,
                 "object_ids": list(predictive_model.object_ids),
+                "approved_object_ids": list(
+                    predictive_model.approved_object_ids
+                ),
+                "rejected_object_ids": list(
+                    predictive_model.rejected_object_ids
+                ),
+                "covariance_scale": predictive_model.covariance_scale,
+                "calibration_semantics": (
+                    predictive_model.calibration_semantics
+                ),
+                "model_approved": predictive_model.model_approved,
+                "model_valid_for_object": (
+                    object_config.cad_object.object_id
+                    in predictive_model.approved_object_ids
+                ),
+                "fallback_used": False,
+                "research_override_used": (
+                    args.allow_unapproved_predictive_covariance
+                ),
             }
         ),
         "gate_audit": (

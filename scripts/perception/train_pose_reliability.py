@@ -27,7 +27,9 @@ from lzt_common.object_config import load_object_config  # noqa: E402
 from lzt_perception.pose_reliability import (  # noqa: E402
     FEATURE_NAMES,
     PoseReliabilityModel,
+    apply_affine_logit_calibration,
     binary_probability_metrics,
+    fit_affine_logit_calibrator,
     fit_pose_reliability_model,
     pose_reliability_features,
 )
@@ -187,6 +189,454 @@ def _risk_coverage(
     return curve
 
 
+def _load_frozen_split(
+    path: Path,
+    available_objects: list[int],
+) -> tuple[dict[str, list[int]], dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    raw_split = payload.get("split")
+    if not isinstance(raw_split, dict):
+        raise ValueError("split config must contain a split object")
+    split: dict[str, list[int]] = {}
+    for name in ("train", "calibration", "test"):
+        values = raw_split.get(name)
+        if not isinstance(values, list) or not values:
+            raise ValueError(f"split config requires a non-empty {name} list")
+        object_ids = [int(value) for value in values]
+        if len(set(object_ids)) != len(object_ids):
+            raise ValueError(f"split {name} contains duplicate object IDs")
+        split[name] = sorted(object_ids)
+    memberships = [object_id for values in split.values() for object_id in values]
+    if len(set(memberships)) != len(memberships):
+        raise ValueError("train/calibration/test object IDs must be disjoint")
+    available = set(available_objects)
+    requested = set(memberships)
+    if requested != available:
+        raise ValueError(
+            "split object IDs must exactly match audit objects; "
+            f"missing={sorted(available - requested)}, "
+            f"unknown={sorted(requested - available)}"
+        )
+    return split, payload
+
+
+def _samples_for_objects(
+    samples: list[dict[str, Any]], object_ids: list[int]
+) -> list[dict[str, Any]]:
+    requested = set(object_ids)
+    selected = [sample for sample in samples if int(sample["object_id"]) in requested]
+    if not selected:
+        raise ValueError(f"no reliability samples for objects {sorted(requested)}")
+    return selected
+
+
+def _sample_arrays(
+    samples: list[dict[str, Any]],
+) -> tuple[np.ndarray, np.ndarray]:
+    return (
+        np.vstack([sample["features"] for sample in samples]),
+        np.asarray([sample["label"] for sample in samples], dtype=np.float64),
+    )
+
+
+def _calibration_curve(
+    labels: np.ndarray,
+    probabilities: np.ndarray,
+    bins: int,
+) -> list[dict[str, float | int | None]]:
+    targets = np.asarray(labels, dtype=np.float64).reshape(-1)
+    scores = np.asarray(probabilities, dtype=np.float64).reshape(-1)
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    result = []
+    for index in range(bins):
+        if index + 1 == bins:
+            mask = (scores >= edges[index]) & (scores <= edges[index + 1])
+        else:
+            mask = (scores >= edges[index]) & (scores < edges[index + 1])
+        count = int(np.sum(mask))
+        result.append(
+            {
+                "lower": float(edges[index]),
+                "upper": float(edges[index + 1]),
+                "count": count,
+                "mean_probability": (
+                    None if count == 0 else float(np.mean(scores[mask]))
+                ),
+                "empirical_positive_fraction": (
+                    None if count == 0 else float(np.mean(targets[mask]))
+                ),
+            }
+        )
+    return result
+
+
+def _inventory(
+    samples: list[dict[str, Any]],
+    denominators: dict[int, int],
+    sources: list[dict[str, Any]],
+    split: dict[str, list[int]],
+) -> list[dict[str, Any]]:
+    source_by_object = {int(item["object_id"]): item for item in sources}
+    membership = {
+        object_id: name for name, object_ids in split.items() for object_id in object_ids
+    }
+    rows = []
+    for object_id in sorted(source_by_object):
+        object_samples = [
+            sample for sample in samples if int(sample["object_id"]) == object_id
+        ]
+        positives = int(sum(bool(sample["label"]) for sample in object_samples))
+        rows.append(
+            {
+                "object_id": object_id,
+                "split": membership[object_id],
+                "raw_pose_groups": int(source_by_object[object_id]["raw_group_count"]),
+                "fixed_bop_target_instances": int(denominators[object_id]),
+                "accepted_labeled_candidates": len(object_samples),
+                "positive_candidates": positives,
+                "positive_fraction": positives / max(len(object_samples), 1),
+            }
+        )
+    return rows
+
+
+def _evaluate_split(
+    split_samples: list[dict[str, Any]],
+    model: PoseReliabilityModel,
+    denominators: dict[int, int],
+    calibration_bins: int,
+) -> tuple[dict[str, Any], np.ndarray]:
+    features, labels = _sample_arrays(split_samples)
+    probabilities = np.asarray(model.predict_proba(features), dtype=np.float64)
+    annotated = []
+    for sample, probability in zip(split_samples, probabilities):
+        row = dict(sample)
+        row["calibrated_probability"] = float(probability)
+        annotated.append(row)
+    model_selection, selected = _selection_summary(
+        annotated, "calibrated_probability", denominators
+    )
+    baselines = {}
+    for score_name in ("original_score", "robust_score"):
+        selection, _ = _selection_summary(annotated, score_name, denominators)
+        baselines[score_name] = {
+            "candidate_probability_metrics": binary_probability_metrics(
+                labels,
+                np.asarray([sample[score_name] for sample in annotated]),
+                calibration_bins=calibration_bins,
+            ),
+            "group_selection": selection,
+        }
+    denominator = int(sum(denominators.values()))
+    report = {
+        "candidate_probability_metrics": binary_probability_metrics(
+            labels, probabilities, calibration_bins=calibration_bins
+        ),
+        "calibration_curve": _calibration_curve(
+            labels, probabilities, calibration_bins
+        ),
+        "group_selection": model_selection,
+        "baselines": baselines,
+        "risk_coverage": _risk_coverage(
+            selected, "calibrated_probability", denominator
+        ),
+    }
+    return report, probabilities
+
+
+def _per_object_evaluation(
+    split_samples: list[dict[str, Any]],
+    model: PoseReliabilityModel,
+    denominators: dict[int, int],
+    calibration_bins: int,
+) -> dict[str, Any]:
+    reports = {}
+    for object_id in sorted(denominators):
+        object_samples = [
+            sample
+            for sample in split_samples
+            if int(sample["object_id"]) == object_id
+        ]
+        features, labels = _sample_arrays(object_samples)
+        probabilities = np.asarray(model.predict_proba(features), dtype=np.float64)
+        annotated = []
+        for sample, probability in zip(object_samples, probabilities):
+            row = dict(sample)
+            row["calibrated_probability"] = float(probability)
+            annotated.append(row)
+        selection, _ = _selection_summary(
+            annotated,
+            "calibrated_probability",
+            {object_id: denominators[object_id]},
+        )
+        reports[str(object_id)] = {
+            "candidate_probability_metrics": binary_probability_metrics(
+                labels, probabilities, calibration_bins=calibration_bins
+            ),
+            "group_selection": selection,
+        }
+    return reports
+
+
+def _run_frozen_split_protocol(
+    *,
+    args: argparse.Namespace,
+    samples: list[dict[str, Any]],
+    raw_group_denominators: dict[int, int],
+    sources: list[dict[str, Any]],
+    denominators: dict[int, int],
+    objects: list[int],
+) -> None:
+    split, split_payload = _load_frozen_split(args.split_config.resolve(), objects)
+    split_samples = {
+        name: _samples_for_objects(samples, object_ids)
+        for name, object_ids in split.items()
+    }
+    train_features, train_labels = _sample_arrays(split_samples["train"])
+    calibration_features, calibration_labels = _sample_arrays(
+        split_samples["calibration"]
+    )
+    test_features, test_labels = _sample_arrays(split_samples["test"])
+    del test_features, test_labels  # Test labels are first consumed after selection.
+
+    l2_grid = sorted(set(float(value) for value in args.l2_grid))
+    if not l2_grid or any(not np.isfinite(value) or value < 0.0 for value in l2_grid):
+        raise ValueError("--l2-grid values must be finite and non-negative")
+    balance_options = tuple(dict.fromkeys(args.class_weight_options))
+    candidates = []
+    fitted: list[tuple[tuple[float, ...], PoseReliabilityModel, dict[str, Any]]] = []
+    for l2_regularization in l2_grid:
+        for class_weight in balance_options:
+            balance_classes = class_weight == "balanced"
+            base_model = fit_pose_reliability_model(
+                train_features,
+                train_labels,
+                label_mssd_normalized_threshold=args.label_mssd_normalized,
+                l2_regularization=l2_regularization,
+                maximum_iterations=args.maximum_iterations,
+                balance_classes=balance_classes,
+            )
+            raw_probabilities = np.asarray(
+                base_model.predict_proba(calibration_features), dtype=np.float64
+            )
+            logit_scale, logit_bias = fit_affine_logit_calibrator(
+                calibration_labels,
+                raw_probabilities,
+                maximum_iterations=args.maximum_iterations,
+            )
+            calibrated_model = base_model.with_logit_calibration(
+                logit_scale, logit_bias
+            )
+            calibrated_probabilities = apply_affine_logit_calibration(
+                raw_probabilities, logit_scale, logit_bias
+            )
+            raw_metrics = binary_probability_metrics(
+                calibration_labels,
+                raw_probabilities,
+                calibration_bins=args.calibration_bins,
+            )
+            calibrated_metrics = binary_probability_metrics(
+                calibration_labels,
+                calibrated_probabilities,
+                calibration_bins=args.calibration_bins,
+            )
+            candidate = {
+                "l2_regularization": l2_regularization,
+                "class_weight": class_weight,
+                "logit_scale": logit_scale,
+                "logit_bias": logit_bias,
+                "raw_calibration_metrics": raw_metrics,
+                "calibrated_metrics": calibrated_metrics,
+            }
+            # Calibration quality is primary.  AUC is not in the key because
+            # positive affine-logit calibration preserves ranking.
+            key = (
+                float(calibrated_metrics["brier_score"]),
+                float(calibrated_metrics["log_loss"]),
+                float(calibrated_metrics["expected_calibration_error"]),
+                float(l2_regularization),
+                1.0 if balance_classes else 0.0,
+            )
+            fitted.append((key, calibrated_model, candidate))
+            candidates.append(candidate)
+    fitted.sort(key=lambda item: item[0])
+    _, final_model, selected_candidate = fitted[0]
+    selected_index = candidates.index(selected_candidate)
+    for index, candidate in enumerate(candidates):
+        candidate["selected"] = index == selected_index
+
+    model_path = args.output_dir / "pose_reliability_model.json"
+    model_payload = final_model.to_dict()
+    model_payload["schema_version"] = 2
+    model_payload["deployment"] = {
+        "status": "research_candidate",
+        "approved_for_online": False,
+        "reason": (
+            "offline train/calibration/test artifact; promotion requires an "
+            "explicit post-evaluation decision"
+        ),
+    }
+    model_payload["calibration"] = {
+        "method": "affine_logit_platt_scaling",
+        "folded_into_runtime_coefficients": True,
+        "logit_scale": selected_candidate["logit_scale"],
+        "logit_bias": selected_candidate["logit_bias"],
+        "object_ids": split["calibration"],
+    }
+    model_payload["training"] = {
+        "protocol": "frozen_object_level_train_calibration_test",
+        "split_config": str(args.split_config.resolve()),
+        "train_object_ids": split["train"],
+        "calibration_object_ids": split["calibration"],
+        "test_object_ids": split["test"],
+        "train_sample_count": len(split_samples["train"]),
+        "calibration_sample_count": len(split_samples["calibration"]),
+        "test_sample_count": len(split_samples["test"]),
+        "train_positive_fraction": float(np.mean(train_labels)),
+        "selected_l2_regularization": selected_candidate["l2_regularization"],
+        "selected_class_weight": selected_candidate["class_weight"],
+        "candidate_configuration_count": len(candidates),
+        "test_used_for_model_selection": False,
+        "source_audits": sources,
+        "limitations": split_payload.get("limitations", []),
+    }
+    model_path.write_text(
+        json.dumps(model_payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    evaluation = {}
+    predictions_by_split = {}
+    for name in ("train", "calibration", "test"):
+        split_denominators = {
+            object_id: denominators[object_id] for object_id in split[name]
+        }
+        evaluation[name], predictions_by_split[name] = _evaluate_split(
+            split_samples[name],
+            final_model,
+            split_denominators,
+            args.calibration_bins,
+        )
+        evaluation[name]["per_object"] = _per_object_evaluation(
+            split_samples[name],
+            final_model,
+            split_denominators,
+            args.calibration_bins,
+        )
+
+    historical_baseline = None
+    if args.baseline_model is not None:
+        baseline_model = PoseReliabilityModel.load(args.baseline_model.resolve())
+        historical_baseline = {
+            "model_file": str(args.baseline_model.resolve()),
+            "role": "read_only_same_split_comparison_not_used_for_v4_selection",
+            "evaluation": {},
+        }
+        for name in ("train", "calibration", "test"):
+            split_denominators = {
+                object_id: denominators[object_id] for object_id in split[name]
+            }
+            baseline_report, _ = _evaluate_split(
+                split_samples[name],
+                baseline_model,
+                split_denominators,
+                args.calibration_bins,
+            )
+            baseline_report["per_object"] = _per_object_evaluation(
+                split_samples[name],
+                baseline_model,
+                split_denominators,
+                args.calibration_bins,
+            )
+            historical_baseline["evaluation"][name] = baseline_report
+
+    inventory = _inventory(samples, denominators, sources, split)
+    (args.output_dir / "sample_inventory.json").write_text(
+        json.dumps(inventory, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    (args.output_dir / "model_selection.json").write_text(
+        json.dumps(
+            {
+                "selection_split": "calibration",
+                "selection_key": ["brier_score", "log_loss", "ece", "l2", "class_weight"],
+                "candidate_configuration_count": len(candidates),
+                "candidates": candidates,
+                "test_labels_used_for_selection": False,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    report = {
+        "schema_version": 2,
+        "method": "frozen_split_calibrated_topk_pose_reliability",
+        "ground_truth_usage": (
+            "MSSD labels are used only for offline training, calibration and "
+            "evaluation; runtime features and predictions do not contain ground truth."
+        ),
+        "label_mssd_normalized_threshold": args.label_mssd_normalized,
+        "feature_names": list(FEATURE_NAMES),
+        "split": split,
+        "split_policy": split_payload.get("selection_policy", {}),
+        "prior_exposure": split_payload.get("prior_exposure", {}),
+        "sources": sources,
+        "observed_raw_pose_groups": int(sum(raw_group_denominators.values())),
+        "fixed_target_denominator": int(sum(denominators.values())),
+        "targets_json": str(args.targets_json.resolve()),
+        "selected_candidate": selected_candidate,
+        "evaluation": evaluation,
+        "historical_baseline": historical_baseline,
+        "test_used_for_model_selection": False,
+        "model_file": str(model_path.resolve()),
+    }
+    (args.output_dir / "evaluation.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    with (args.output_dir / "split_predictions.csv").open(
+        "w", encoding="utf-8", newline=""
+    ) as stream:
+        fieldnames = [
+            "split",
+            "object_id",
+            "scene_id",
+            "image_id",
+            "instance_id",
+            "hypothesis_id",
+            "label",
+            "mssd_normalized",
+            "original_score",
+            "robust_score",
+            "calibrated_probability",
+        ]
+        writer = csv.DictWriter(stream, fieldnames=fieldnames)
+        writer.writeheader()
+        for name in ("train", "calibration", "test"):
+            for sample, probability in zip(
+                split_samples[name], predictions_by_split[name]
+            ):
+                _, scene_id, image_id, _, instance_id = sample["group_key"]
+                writer.writerow(
+                    {
+                        "split": name,
+                        "object_id": sample["object_id"],
+                        "scene_id": scene_id,
+                        "image_id": image_id,
+                        "instance_id": instance_id,
+                        "hypothesis_id": sample["hypothesis_id"],
+                        "label": int(sample["label"]),
+                        "mssd_normalized": sample["mssd_normalized"],
+                        "original_score": sample["original_score"],
+                        "robust_score": sample["robust_score"],
+                        "calibrated_probability": float(probability),
+                    }
+                )
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
@@ -204,6 +654,34 @@ def main() -> None:
     )
     parser.add_argument("--label-mssd-normalized", type=float, default=0.1)
     parser.add_argument("--l2-regularization", type=float, default=1.0)
+    parser.add_argument(
+        "--split-config",
+        type=Path,
+        help=(
+            "frozen object-level train/calibration/test protocol; when set, "
+            "the test split is excluded from all model selection"
+        ),
+    )
+    parser.add_argument(
+        "--baseline-model",
+        type=Path,
+        help="optional frozen model evaluated after V4 selection for comparison only",
+    )
+    parser.add_argument(
+        "--l2-grid",
+        type=float,
+        nargs="+",
+        default=[0.0, 0.1, 1.0, 10.0, 100.0],
+        help="L2 candidates selected only on the calibration split",
+    )
+    parser.add_argument(
+        "--class-weight-options",
+        choices=("unbalanced", "balanced"),
+        nargs="+",
+        default=["unbalanced", "balanced"],
+        help="class weighting candidates selected only on the calibration split",
+    )
+    parser.add_argument("--calibration-bins", type=int, default=10)
     parser.add_argument("--maximum-iterations", type=int, default=100)
     parser.add_argument(
         "--balance-classes",
@@ -213,6 +691,12 @@ def main() -> None:
     args = parser.parse_args()
     if args.label_mssd_normalized <= 0.0:
         raise SystemExit("--label-mssd-normalized must be positive")
+    if args.calibration_bins < 2:
+        raise SystemExit("--calibration-bins must be at least 2")
+    if args.split_config is not None and not args.split_config.is_file():
+        raise SystemExit(f"split config is missing: {args.split_config}")
+    if args.baseline_model is not None and not args.baseline_model.is_file():
+        raise SystemExit(f"baseline model is missing: {args.baseline_model}")
     if args.output_dir.exists() and any(args.output_dir.iterdir()):
         raise SystemExit(
             f"refusing to overwrite non-empty output directory: {args.output_dir}"
@@ -229,6 +713,16 @@ def main() -> None:
     denominators = _target_denominators(args.targets_json.resolve(), objects)
     for source in sources:
         source["bop_target_instance_count"] = denominators[source["object_id"]]
+    if args.split_config is not None:
+        _run_frozen_split_protocol(
+            args=args,
+            samples=samples,
+            raw_group_denominators=raw_group_denominators,
+            sources=sources,
+            denominators=denominators,
+            objects=objects,
+        )
+        return
     features = np.vstack([sample["features"] for sample in samples])
     labels = np.asarray([sample["label"] for sample in samples], dtype=np.float64)
     cross_validated = np.zeros(len(samples), dtype=np.float64)

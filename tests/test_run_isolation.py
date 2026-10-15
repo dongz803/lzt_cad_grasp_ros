@@ -1,5 +1,6 @@
 from argparse import Namespace
 import importlib.util
+import json
 from pathlib import Path
 
 import numpy as np
@@ -266,3 +267,40 @@ def test_reliability_evaluation_counts_missing_bop_targets(tmp_path: Path) -> No
     denominators = script._target_denominators(targets, [2, 3])
 
     assert denominators == {2: 5, 3: 4}
+
+
+def test_reliability_frozen_split_must_be_disjoint_and_complete(tmp_path: Path) -> None:
+    script = _load_script("train_pose_reliability.py")
+    valid = tmp_path / "valid.json"
+    valid.write_text(
+        json.dumps(
+            {
+                "split": {
+                    "train": [1, 2],
+                    "calibration": [3],
+                    "test": [4],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    split, _ = script._load_frozen_split(valid, [1, 2, 3, 4])
+
+    assert split == {"train": [1, 2], "calibration": [3], "test": [4]}
+
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text(
+        json.dumps(
+            {
+                "split": {
+                    "train": [1, 2],
+                    "calibration": [2, 3],
+                    "test": [4],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="must be disjoint"):
+        script._load_frozen_split(invalid, [1, 2, 3, 4])

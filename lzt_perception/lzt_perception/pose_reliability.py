@@ -169,6 +169,31 @@ class PoseReliabilityModel:
         probabilities = 1.0 / (1.0 + np.exp(-logits))
         return probabilities[0] if single else probabilities
 
+    def with_logit_calibration(
+        self,
+        logit_scale: float,
+        logit_bias: float,
+    ) -> "PoseReliabilityModel":
+        """Fold an affine probability calibrator into the portable model.
+
+        The transformation is ``sigmoid(scale * raw_logit + bias)``.  Folding
+        it into the coefficients keeps the runtime path independent of the
+        offline calibration implementation.
+        """
+
+        if not np.isfinite(logit_scale) or logit_scale < 0.0:
+            raise ValueError("logit calibration scale must be finite and non-negative")
+        if not np.isfinite(logit_bias):
+            raise ValueError("logit calibration bias must be finite")
+        return PoseReliabilityModel(
+            feature_mean=self.feature_mean,
+            feature_scale=self.feature_scale,
+            coefficients=self.coefficients * logit_scale,
+            intercept=float(self.intercept * logit_scale + logit_bias),
+            label_mssd_normalized_threshold=self.label_mssd_normalized_threshold,
+            method=f"{self.method}+affine_logit_calibration",
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": 1,
@@ -298,6 +323,84 @@ def fit_pose_reliability_model(
             else "l2_logistic_regression"
         ),
     )
+
+
+def fit_affine_logit_calibrator(
+    labels: np.ndarray,
+    probabilities: np.ndarray,
+    *,
+    maximum_iterations: int = 100,
+    tolerance: float = 1e-10,
+    l2_regularization: float = 1e-6,
+) -> tuple[float, float]:
+    """Fit a two-parameter Platt-style calibrator on an independent split.
+
+    The slope is required to be non-negative so calibration cannot silently
+    reverse the candidate ranking learned on the training split.  If the
+    unconstrained Newton optimum has a negative slope, the boundary solution
+    uses a constant probability equal to the calibration prevalence.
+    """
+
+    targets = np.asarray(labels, dtype=np.float64).reshape(-1)
+    scores = np.asarray(probabilities, dtype=np.float64).reshape(-1)
+    if len(targets) != len(scores) or len(targets) < 2:
+        raise ValueError("calibration labels and probabilities must be aligned")
+    if not np.all(np.isin(targets, [0.0, 1.0])):
+        raise ValueError("calibration labels must be binary")
+    if not np.all(np.isfinite(scores)):
+        raise ValueError("calibration probabilities must be finite")
+    positives = int(np.sum(targets == 1.0))
+    negatives = int(np.sum(targets == 0.0))
+    if positives == 0 or negatives == 0:
+        raise ValueError("calibration labels must contain both classes")
+    if maximum_iterations < 1 or tolerance <= 0.0 or l2_regularization < 0.0:
+        raise ValueError("invalid calibrator optimizer configuration")
+
+    clipped = np.clip(scores, 1e-9, 1.0 - 1e-9)
+    raw_logits = np.log(clipped / (1.0 - clipped))
+    design = np.column_stack((np.ones(len(raw_logits)), raw_logits))
+    beta = np.asarray([0.0, 1.0], dtype=np.float64)
+    regularizer = np.diag([0.0, l2_regularization])
+    for _ in range(maximum_iterations):
+        logits = np.clip(design @ beta, -40.0, 40.0)
+        calibrated = 1.0 / (1.0 + np.exp(-logits))
+        gradient = design.T @ (calibrated - targets) / len(targets)
+        gradient += regularizer @ beta / len(targets)
+        curvature = np.maximum(calibrated * (1.0 - calibrated), 1e-8)
+        hessian = (design.T * curvature) @ design / len(targets)
+        hessian += regularizer / len(targets)
+        step = np.linalg.solve(hessian + np.eye(2) * 1e-10, gradient)
+        beta -= step
+        if float(np.linalg.norm(step)) < tolerance:
+            break
+
+    bias = float(beta[0])
+    scale = float(beta[1])
+    if scale < 0.0:
+        prevalence = float(np.mean(targets))
+        bias = float(np.log(prevalence / (1.0 - prevalence)))
+        scale = 0.0
+    return scale, bias
+
+
+def apply_affine_logit_calibration(
+    probabilities: np.ndarray,
+    logit_scale: float,
+    logit_bias: float,
+) -> np.ndarray:
+    """Apply the affine-logit calibration used by ``with_logit_calibration``."""
+
+    scores = np.asarray(probabilities, dtype=np.float64)
+    if not np.all(np.isfinite(scores)):
+        raise ValueError("probabilities must be finite")
+    if not np.isfinite(logit_scale) or logit_scale < 0.0:
+        raise ValueError("logit calibration scale must be finite and non-negative")
+    if not np.isfinite(logit_bias):
+        raise ValueError("logit calibration bias must be finite")
+    clipped = np.clip(scores, 1e-9, 1.0 - 1e-9)
+    raw_logits = np.log(clipped / (1.0 - clipped))
+    logits = np.clip(logit_scale * raw_logits + logit_bias, -40.0, 40.0)
+    return 1.0 / (1.0 + np.exp(-logits))
 
 
 def binary_probability_metrics(

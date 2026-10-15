@@ -32,7 +32,13 @@ from lzt_common.contracts import CADObject  # noqa: E402
 from lzt_common.object_config import load_object_config  # noqa: E402
 from lzt_perception.mask_evaluation import decode_coco_rle  # noqa: E402
 from lzt_perception.pose_uncertainty import (  # noqa: E402
+    PredictivePoseCovarianceModel,
+    calibrate_covariance_scale,
+    chi_square_quantile,
     combine_predictive_and_dispersion,
+    conformal_upper_quantile,
+    covariance_log_pseudodeterminant,
+    empirical_coverage_statistics,
     fit_predictive_covariance,
     squared_mahalanobis,
     symmetry_aware_pose_residual,
@@ -455,6 +461,424 @@ def _default_cases() -> list[tuple[Path, Path]]:
     ]
 
 
+def _full_tless_cases() -> list[tuple[Path, Path]]:
+    base = (
+        PROJECT_ROOT
+        / "outputs/innovation1_v3_full/tless_objects1_30_fixed_10mm_5deg_v1"
+        / "mode_aware_10mm_5deg"
+    )
+    return [
+        (
+            PROJECT_ROOT
+            / f"lzt_description/config/objects/tless_{number:06d}.yaml",
+            base / f"obj{number}/pose-modes-refined.json",
+        )
+        for number in range(1, 31)
+    ]
+
+
+def _mode_samples_for_ids(
+    samples_by_object: dict[str, list[ModeResidualSample]],
+    object_numbers: list[int],
+    correct_threshold: float,
+    minimum_match_iou: float,
+) -> list[ModeResidualSample]:
+    requested = {f"tless_{number:06d}" for number in object_numbers}
+    result = [
+        sample
+        for object_id, samples in samples_by_object.items()
+        if object_id in requested
+        for sample in samples
+        if sample.detection_gt_mask_iou >= minimum_match_iou
+        and sample.normalized_surface_displacement_proxy <= correct_threshold
+    ]
+    if not result:
+        raise ValueError(f"no correct-mode samples for objects {sorted(requested)}")
+    return result
+
+
+def _uncertainty_distances(
+    samples: list[ModeResidualSample],
+    predictive_covariance: np.ndarray,
+    projector: np.ndarray,
+    semantics: str,
+) -> np.ndarray:
+    result = []
+    for sample in samples:
+        covariance = predictive_covariance
+        if semantics == "predictive_plus_candidate_dispersion":
+            covariance = combine_predictive_and_dispersion(
+                predictive_covariance,
+                sample.dispersion_covariance_se3,
+            )
+        elif semantics != "predictive_only":
+            raise ValueError(f"unsupported covariance semantics {semantics}")
+        result.append(
+            squared_mahalanobis(sample.residual_se3, covariance, projector)
+        )
+    return np.asarray(result, dtype=np.float64)
+
+
+def _uncertainty_sharpness(
+    samples: list[ModeResidualSample],
+    predictive_covariance: np.ndarray,
+    projector: np.ndarray,
+    semantics: str,
+) -> dict[str, float]:
+    log_determinants = []
+    nll_values = []
+    rank = int(np.linalg.matrix_rank(projector, tol=1e-10))
+    for sample in samples:
+        covariance = predictive_covariance
+        if semantics == "predictive_plus_candidate_dispersion":
+            covariance = combine_predictive_and_dispersion(
+                predictive_covariance,
+                sample.dispersion_covariance_se3,
+            )
+        log_pdet = covariance_log_pseudodeterminant(covariance, projector)
+        distance = squared_mahalanobis(sample.residual_se3, covariance, projector)
+        log_determinants.append(log_pdet)
+        nll_values.append(0.5 * (distance + log_pdet + rank * np.log(2.0 * np.pi)))
+    return {
+        "mean_log_pseudodeterminant": float(np.mean(log_determinants)),
+        "mean_gaussian_nll": float(np.mean(nll_values)),
+    }
+
+
+def _coverage_at_levels(
+    distances: np.ndarray,
+    thresholds: dict[str, float],
+    levels: list[float],
+) -> dict[str, Any]:
+    return {
+        f"{level:.4f}": empirical_coverage_statistics(
+            distances,
+            thresholds[f"{level:.4f}"],
+            level,
+        )
+        for level in levels
+    }
+
+
+def _run_frozen_protocol(
+    *,
+    args: argparse.Namespace,
+    protocol: dict[str, Any],
+    samples_by_object: dict[str, list[ModeResidualSample]],
+    projectors: dict[str, np.ndarray],
+    resolved_cases: list[dict[str, Any]],
+) -> None:
+    all_object_numbers = sorted(_object_number(item) for item in samples_by_object)
+    assigned = []
+    for stratum in protocol["strata"].values():
+        assigned.extend(stratum["train"])
+        assigned.extend(stratum["calibration"])
+        assigned.extend(stratum["test"])
+    if len(assigned) != len(set(assigned)) or sorted(assigned) != all_object_numbers:
+        raise ValueError("protocol strata must assign every supplied object exactly once")
+
+    levels = [float(value) for value in protocol["nominal_coverage_levels"]]
+    selection_level = float(protocol["model_selection_nominal_coverage"])
+    minimum_calibration_coverage = float(protocol["minimum_calibration_coverage"])
+    minimum_test_coverage = float(protocol["minimum_test_coverage"])
+    minimum_object_coverage = float(protocol["minimum_per_object_test_coverage"])
+    minimum_object_samples = int(protocol["minimum_per_object_test_samples"])
+    max_translation_std = float(protocol["maximum_translation_std_m"])
+    max_rotation_std_deg = float(
+        protocol["maximum_observable_rotation_std_deg"]
+    )
+    deployable_semantics = str(
+        protocol["selection_policy"]["deployable_semantics"]
+    )
+    output_dir = args.output_dir.resolve()
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise ValueError(f"refusing to overwrite non-empty output directory: {output_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    report: dict[str, Any] = {
+        "schema_version": 2,
+        "analysis_type": "frozen_split_pose_mode_predictive_uncertainty",
+        "protocol_config": str(args.protocol_config.resolve()),
+        "dataset_root": str(args.dataset_root.resolve()),
+        "detections": str(args.detections.resolve()),
+        "cases": resolved_cases,
+        "ground_truth_usage": (
+            "GT selects the corresponding correct mode and forms residuals only "
+            "for offline fit, calibration and test; GT is absent online."
+        ),
+        "strata": {},
+        "limitations": list(protocol.get("limitations", [])),
+    }
+    for stratum_name, split in protocol["strata"].items():
+        split_ids = {
+            name: [int(value) for value in split[name]]
+            for name in ("train", "calibration", "test")
+        }
+        object_ids = [
+            f"tless_{number:06d}"
+            for name in ("train", "calibration", "test")
+            for number in split_ids[name]
+        ]
+        stratum_projectors = [projectors[object_id] for object_id in object_ids]
+        projector = stratum_projectors[0]
+        if any(
+            not np.allclose(item, projector, atol=1e-10)
+            for item in stratum_projectors[1:]
+        ):
+            raise ValueError(f"stratum {stratum_name} mixes observable projectors")
+        rank = int(np.linalg.matrix_rank(projector, tol=1e-10))
+        if rank != int(split["observable_rank"]):
+            raise ValueError(f"stratum {stratum_name} observable rank mismatch")
+        samples = {
+            name: _mode_samples_for_ids(
+                samples_by_object,
+                split_ids[name],
+                args.correct_mode_normalized_surface_threshold,
+                args.minimum_gt_match_iou,
+            )
+            for name in ("train", "calibration", "test")
+        }
+        train_residuals = np.asarray(
+            [item.residual_se3 for item in samples["train"]], dtype=np.float64
+        )
+        calibration_residuals = np.asarray(
+            [item.residual_se3 for item in samples["calibration"]],
+            dtype=np.float64,
+        )
+        calibration_dispersions = np.asarray(
+            [item.dispersion_covariance_se3 for item in samples["calibration"]],
+            dtype=np.float64,
+        )
+        candidates = []
+        fitted = []
+        for shrinkage in protocol["shrinkage_grid"]:
+            base_covariance = fit_predictive_covariance(
+                train_residuals,
+                projector,
+                shrinkage=float(shrinkage),
+            )
+            for semantics in protocol["semantics_grid"]:
+                use_dispersion = semantics == "predictive_plus_candidate_dispersion"
+                scale, theoretical_coverage = calibrate_covariance_scale(
+                    calibration_residuals,
+                    base_covariance,
+                    projector,
+                    dispersion_covariances=(
+                        calibration_dispersions if use_dispersion else None
+                    ),
+                    nominal_coverage=selection_level,
+                    minimum_coverage=minimum_calibration_coverage,
+                )
+                predictive_covariance = scale * base_covariance
+                calibration_distances = _uncertainty_distances(
+                    samples["calibration"],
+                    predictive_covariance,
+                    projector,
+                    str(semantics),
+                )
+                thresholds = {
+                    f"{level:.4f}": conformal_upper_quantile(
+                        calibration_distances, level
+                    )
+                    for level in levels
+                }
+                calibration_coverage = _coverage_at_levels(
+                    calibration_distances, thresholds, levels
+                )
+                sharpness = _uncertainty_sharpness(
+                    samples["calibration"],
+                    predictive_covariance,
+                    projector,
+                    str(semantics),
+                )
+                translation_std = _maximum_std(predictive_covariance[:3, :3])
+                rotation_std_deg = float(
+                    np.degrees(_maximum_std(predictive_covariance[3:, 3:]))
+                )
+                candidate = {
+                    "shrinkage": float(shrinkage),
+                    "semantics": str(semantics),
+                    "covariance_scale": float(scale),
+                    "theoretical_threshold_d2": chi_square_quantile(
+                        selection_level, rank
+                    ),
+                    "theoretical_calibration_coverage": theoretical_coverage,
+                    "empirical_mahalanobis_thresholds": thresholds,
+                    "empirical_calibration_coverage": calibration_coverage,
+                    "sharpness": sharpness,
+                    "translation_max_std_m": translation_std,
+                    "observable_rotation_max_std_deg": rotation_std_deg,
+                    "passes_calibration": bool(
+                        theoretical_coverage["observed_coverage"]
+                        >= minimum_calibration_coverage
+                        and translation_std <= max_translation_std
+                        and rotation_std_deg <= max_rotation_std_deg
+                    ),
+                }
+                candidates.append(candidate)
+                if (
+                    candidate["passes_calibration"]
+                    and semantics == deployable_semantics
+                ):
+                    key = (
+                        sharpness["mean_log_pseudodeterminant"],
+                        translation_std,
+                        rotation_std_deg,
+                        float(shrinkage),
+                    )
+                    fitted.append((key, base_covariance, candidate))
+        if not fitted:
+            raise ValueError(f"no deployable covariance candidate for {stratum_name}")
+        fitted.sort(key=lambda item: item[0])
+        _, base_covariance, selected = fitted[0]
+        for candidate in candidates:
+            candidate["selected"] = candidate is selected
+        predictive_covariance = selected["covariance_scale"] * base_covariance
+        thresholds = selected["empirical_mahalanobis_thresholds"]
+        split_evaluation = {}
+        for name in ("train", "calibration", "test"):
+            distances = _uncertainty_distances(
+                samples[name], predictive_covariance, projector, deployable_semantics
+            )
+            split_evaluation[name] = {
+                "sample_count": len(samples[name]),
+                "coverage": _coverage_at_levels(distances, thresholds, levels),
+                "sharpness": _uncertainty_sharpness(
+                    samples[name],
+                    predictive_covariance,
+                    projector,
+                    deployable_semantics,
+                ),
+            }
+        per_object_test = {}
+        test_level_key = f"{selection_level:.4f}"
+        approved_object_ids = []
+        rejected_object_ids = []
+        for number in split_ids["test"]:
+            object_id = f"tless_{number:06d}"
+            object_samples = _mode_samples_for_ids(
+                samples_by_object,
+                [number],
+                args.correct_mode_normalized_surface_threshold,
+                args.minimum_gt_match_iou,
+            )
+            distances = _uncertainty_distances(
+                object_samples,
+                predictive_covariance,
+                projector,
+                deployable_semantics,
+            )
+            coverage = _coverage_at_levels(distances, thresholds, levels)
+            object_passed = bool(
+                len(object_samples) >= minimum_object_samples
+                and coverage[test_level_key]["observed_coverage"]
+                >= minimum_object_coverage
+            )
+            per_object_test[object_id] = {
+                "sample_count": len(object_samples),
+                "coverage": coverage,
+                "passed": object_passed,
+                "failure_reasons": [
+                    reason
+                    for condition, reason in (
+                        (
+                            len(object_samples) < minimum_object_samples,
+                            "insufficient_test_samples",
+                        ),
+                        (
+                            coverage[test_level_key]["observed_coverage"]
+                            < minimum_object_coverage,
+                            "test_undercoverage",
+                        ),
+                    )
+                    if condition
+                ],
+            }
+            (approved_object_ids if object_passed else rejected_object_ids).append(
+                object_id
+            )
+        overall_test_coverage = split_evaluation["test"]["coverage"][test_level_key]
+        stratum_passed = bool(
+            overall_test_coverage["observed_coverage"] >= minimum_test_coverage
+            and selected["translation_max_std_m"] <= max_translation_std
+            and selected["observable_rotation_max_std_deg"] <= max_rotation_std_deg
+            and approved_object_ids
+        )
+        if not stratum_passed:
+            rejected_object_ids = sorted(set(rejected_object_ids + approved_object_ids))
+            approved_object_ids = []
+        model = PredictivePoseCovarianceModel(
+            object_ids=tuple(object_ids),
+            approved_object_ids=tuple(approved_object_ids),
+            rejected_object_ids=tuple(rejected_object_ids),
+            covariance_se3=base_covariance,
+            observable_projector_se3=projector,
+            covariance_scale=float(selected["covariance_scale"]),
+            nominal_coverage_levels=tuple(levels),
+            empirical_mahalanobis_thresholds=thresholds,
+            calibration_semantics=deployable_semantics,
+            model_approved=stratum_passed,
+            method="frozen_split_scaled_predictive_covariance",
+            conditional_on=(
+                "GT-associated refined mode is correct under diameter-normalized "
+                "observable surface-displacement proxy threshold"
+            ),
+            training={
+                "dataset": "T-LESS test_primesense",
+                "stratum": stratum_name,
+                "train_object_ids": split_ids["train"],
+                "calibration_object_ids": split_ids["calibration"],
+                "test_object_ids": split_ids["test"],
+                "train_sample_count": len(samples["train"]),
+                "calibration_sample_count": len(samples["calibration"]),
+                "test_sample_count": len(samples["test"]),
+                "selected_shrinkage": selected["shrinkage"],
+                "test_used_for_model_selection": False,
+            },
+            schema_version=2,
+            acceptance_policy={
+                key: protocol[key]
+                for key in (
+                    "minimum_calibration_coverage",
+                    "minimum_test_coverage",
+                    "minimum_per_object_test_coverage",
+                    "minimum_per_object_test_samples",
+                    "maximum_translation_std_m",
+                    "maximum_observable_rotation_std_deg",
+                )
+            },
+            validation={
+                "passed": stratum_passed,
+                "split_evaluation": split_evaluation,
+                "per_object_test": per_object_test,
+                "candidate_configuration_count": len(candidates),
+                "selected_candidate": selected,
+                "test_used_for_model_selection": False,
+            },
+            limitations=tuple(protocol.get("limitations", [])),
+        )
+        model_path = output_dir / f"{stratum_name}_predictive_covariance_v4.json"
+        model.save(model_path)
+        report["strata"][stratum_name] = {
+            "split": split_ids,
+            "observable_rank": rank,
+            "candidate_search": candidates,
+            "selected_candidate": selected,
+            "evaluation": split_evaluation,
+            "per_object_test": per_object_test,
+            "model_approved": stratum_passed,
+            "approved_object_ids": approved_object_ids,
+            "rejected_object_ids": rejected_object_ids,
+            "model_file": str(model_path),
+        }
+    report_path = output_dir / "evaluation.json"
+    report_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Calibrate GT residual covariance for pose modes"
@@ -501,6 +925,16 @@ def main() -> None:
         / "outputs/innovation1_pose_modes/tless_objects2_4_v1"
         / "pose-mode-uncertainty-calibration-refined.json",
     )
+    parser.add_argument(
+        "--protocol-config",
+        type=Path,
+        help="frozen train/calibration/test covariance protocol (schema v2)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="new output directory required with --protocol-config",
+    )
     args = parser.parse_args()
 
     if args.continuous_symmetry_samples < 2:
@@ -511,10 +945,14 @@ def main() -> None:
         )
     if not 0.0 <= args.minimum_gt_match_iou <= 1.0:
         raise SystemExit("--minimum-gt-match-iou must lie in [0, 1]")
+    if (args.protocol_config is None) != (args.output_dir is None):
+        raise SystemExit("--protocol-config and --output-dir must be provided together")
+    if args.protocol_config is not None and not args.protocol_config.is_file():
+        raise SystemExit(f"protocol config is missing: {args.protocol_config}")
     cases = (
         [(Path(first), Path(second)) for first, second in args.case]
         if args.case
-        else _default_cases()
+        else (_full_tless_cases() if args.protocol_config else _default_cases())
     )
     model_info_path = args.dataset_root / "models_cad/models_info.json"
     model_info = json.loads(model_info_path.read_text(encoding="utf-8"))
@@ -550,6 +988,16 @@ def main() -> None:
 
     if len(samples_by_object) < 2:
         raise SystemExit("at least two objects are required for held-out validation")
+    if args.protocol_config is not None:
+        protocol = json.loads(args.protocol_config.read_text(encoding="utf-8"))
+        _run_frozen_protocol(
+            args=args,
+            protocol=protocol,
+            samples_by_object=samples_by_object,
+            projectors=projectors,
+            resolved_cases=resolved_cases,
+        )
+        return
     first_projector = next(iter(projectors.values()))
     incompatible = [
         object_id

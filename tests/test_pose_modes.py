@@ -70,6 +70,26 @@ def test_continuous_symmetry_merges_yaw_but_preserves_tilt_mode() -> None:
     assert mixture.modes[1].weight == pytest.approx(0.2)
 
 
+def test_ordinary_se3_ablation_does_not_merge_symmetry_equivalents() -> None:
+    first = np.eye(4)
+    first[:3, 3] = [0.0, 0.0, 0.6]
+    yaw = first @ _rotation(2, 180.0)
+    mixture = cluster_pose_hypotheses(
+        _set(
+            PoseHypothesis(first, 0.6, hypothesis_id=0),
+            PoseHypothesis(yaw, 0.4, hypothesis_id=1),
+        ),
+        _cad(),
+        PoseModeClusteringConfig(use_symmetry_equivalence=False),
+    )
+
+    assert len(mixture.modes) == 2
+    assert mixture.clustering_config.use_symmetry_equivalence is False
+    assert mixture.uncertainty_method.startswith("ordinary_se3_")
+    payload = pose_mixtures_to_jsonable([mixture])[0]
+    assert payload["clustering_config"]["use_symmetry_equivalence"] is False
+
+
 def test_translation_separates_modes_and_covariance_is_psd() -> None:
     first = np.eye(4)
     first[:3, 3] = [0.0, 0.0, 0.6]
@@ -113,6 +133,12 @@ def test_singleton_mode_keeps_predictive_covariance_separate_from_dispersion() -
         _cad(),
         predictive_covariance_se3=predictive,
         predictive_uncertainty_method="test_calibration",
+        predictive_covariance_scale=1.5,
+        predictive_calibration_method="split_conformal",
+        predictive_nominal_coverage_level=0.9,
+        predictive_empirical_mahalanobis_threshold=9.5,
+        predictive_model_approved=True,
+        predictive_model_valid_for_object=True,
         confidence_is_calibrated_probability=True,
     )
     mode = mixture.modes[0]
@@ -121,7 +147,11 @@ def test_singleton_mode_keeps_predictive_covariance_separate_from_dispersion() -
     np.testing.assert_allclose(mode.predictive_covariance_se3, predictive)
     np.testing.assert_allclose(mode.covariance_se3, predictive)
     assert mode.uncertainty_method == "test_calibration"
+    assert mode.covariance_scale == pytest.approx(1.5)
+    assert mode.empirical_mahalanobis_threshold == pytest.approx(9.5)
+    assert mode.model_approved is True
     assert mixture.reliability == pytest.approx(0.7)
     payload = pose_mixtures_to_jsonable([mixture])[0]
     assert payload["reliability"] == pytest.approx(0.7)
     assert payload["modes"][0]["predictive_covariance_se3"] is not None
+    assert payload["modes"][0]["model_valid_for_object"] is True
